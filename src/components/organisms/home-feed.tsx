@@ -35,9 +35,12 @@ export function HomeFeed() {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
   const profile = useAuthStore((state) => state.profile);
+  const preferencesPending = useAuthStore((state) => state.preferencesPending);
+  const preferencesVersion = useAuthStore((state) => state.preferencesVersion);
   const fetchProfile = useAuthStore((state) => state.fetchProfile);
   const [items, setItems] = useState<FeedEntry[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadedPreferencesVersion, setLoadedPreferencesVersion] = useState(-1);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [communityId, setCommunityId] = useState<number | null>(null);
   const [content, setContent] = useState('');
@@ -52,36 +55,71 @@ export function HomeFeed() {
   const [actionError, setActionError] = useState<string | null>(null);
   const loadingMoreRef = useRef(false);
   const actionKeys = useRef(new Set<string>());
+  const visibleItems =
+    !preferencesPending && loadedPreferencesVersion === preferencesVersion ? items : null;
+  const visibleNextCursor =
+    !preferencesPending && loadedPreferencesVersion === preferencesVersion ? nextCursor : null;
+  const visibleFeedError =
+    !preferencesPending && loadedPreferencesVersion === preferencesVersion ? feedError : null;
+  const visibleInitialLoading =
+    initialLoading || preferencesPending || loadedPreferencesVersion !== preferencesVersion;
 
   const loadFeed = useCallback(async (refresh = false) => {
-    if (!token) return;
+    if (
+      !token ||
+      useAuthStore.getState().preferencesPending ||
+      loadedPreferencesVersion !== preferencesVersion
+    ) return;
+    const version = preferencesVersion;
     if (refresh) setRefreshing(true);
     else setInitialLoading(true);
     try {
       const page = await getFeed(token);
+      const current = useAuthStore.getState();
+      if (
+        current.token !== token ||
+        current.preferencesPending ||
+        current.preferencesVersion !== version
+      ) return;
       setItems(page.items);
       setNextCursor(page.nextCursor);
+      setLoadedPreferencesVersion(version);
       setFeedError(null);
     } catch (error) {
-      setFeedError(error instanceof Error ? error.message : 'Could not load your feed.');
+      const current = useAuthStore.getState();
+      if (
+        current.token === token &&
+        !current.preferencesPending &&
+        current.preferencesVersion === version
+      ) {
+        setFeedError(error instanceof Error ? error.message : 'Could not load your feed.');
+      }
     } finally {
-      setInitialLoading(false);
-      setRefreshing(false);
+      if (useAuthStore.getState().token === token) {
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [token]);
+  }, [loadedPreferencesVersion, preferencesVersion, token]);
 
   useEffect(() => {
     if (!token) return;
+    if (preferencesPending) return;
+
     let active = true;
     getFeed(token)
       .then((page) => {
         if (!active) return;
         setItems(page.items);
         setNextCursor(page.nextCursor);
+        setLoadedPreferencesVersion(preferencesVersion);
         setFeedError(null);
       })
       .catch((error: unknown) => {
         if (active) {
+          setItems(null);
+          setNextCursor(null);
+          setLoadedPreferencesVersion(preferencesVersion);
           setFeedError(error instanceof Error ? error.message : 'Could not load your feed.');
         }
       })
@@ -91,7 +129,7 @@ export function HomeFeed() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [preferencesPending, preferencesVersion, token]);
 
   useEffect(() => {
     if (!token || profile) return;
@@ -114,24 +152,44 @@ export function HomeFeed() {
   }, [token]);
 
   const loadMore = useCallback(async () => {
-    if (!token || !nextCursor || loadingMoreRef.current) return;
+    if (
+      !token ||
+      preferencesPending ||
+      loadedPreferencesVersion !== preferencesVersion ||
+      !nextCursor ||
+      loadingMoreRef.current
+    ) return;
+    const version = preferencesVersion;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     setFeedError(null);
     try {
       const page = await getFeed(token, nextCursor);
+      const current = useAuthStore.getState();
+      if (
+        current.token !== token ||
+        current.preferencesPending ||
+        current.preferencesVersion !== version
+      ) return;
       setItems((current) => {
         const existing = new Set((current ?? []).map(entryKey));
         return [...(current ?? []), ...page.items.filter((item) => !existing.has(entryKey(item)))];
       });
       setNextCursor(page.nextCursor);
     } catch (error) {
-      setFeedError(error instanceof Error ? error.message : 'Could not load more posts.');
+      const current = useAuthStore.getState();
+      if (
+        current.token === token &&
+        !current.preferencesPending &&
+        current.preferencesVersion === version
+      ) {
+        setFeedError(error instanceof Error ? error.message : 'Could not load more posts.');
+      }
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [nextCursor, token]);
+  }, [loadedPreferencesVersion, nextCursor, preferencesPending, preferencesVersion, token]);
 
   async function handlePost() {
     if (!token || !profile || posting) return;
@@ -301,33 +359,33 @@ export function HomeFeed() {
           </Atom.ThemedText>
         </View>
       )}
-      {feedError && items ? <Atom.ErrorMessage>{feedError}</Atom.ErrorMessage> : null}
+      {visibleFeedError && visibleItems ? <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage> : null}
     </View>
   );
 
   return (
     <SafeAreaView edges={['top']} style={[styles.screen, { backgroundColor: theme.background }]}>
       <FlatList
-        data={items ?? []}
+        data={visibleItems ?? []}
         keyExtractor={entryKey}
         renderItem={({ item }) => (
           <FeedCard item={item} onLike={handleLike} onVote={handleVote} />
         )}
         ListHeaderComponent={header}
         ListEmptyComponent={
-          initialLoading ? (
+          visibleInitialLoading ? (
             <View style={styles.emptyState}>
               <ActivityIndicator color={theme.accent} />
               <Atom.ThemedText type="small" themeColor="textSecondary">
                 Loading posts…
               </Atom.ThemedText>
             </View>
-          ) : feedError && !items ? (
+          ) : visibleFeedError && !visibleItems ? (
             <View style={styles.emptyState}>
-              <Atom.ErrorMessage>{feedError}</Atom.ErrorMessage>
+              <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage>
               <Atom.Button label="Try again" variant="secondary" onPress={() => loadFeed()} />
             </View>
-          ) : items?.length === 0 ? (
+          ) : visibleItems?.length === 0 ? (
             <View style={[styles.emptyCard, { backgroundColor: theme.surface, borderColor: theme.divider }]}>
               <Atom.ThemedText type="smallBold">Your feed is quiet for now.</Atom.ThemedText>
               <Atom.ThemedText type="small" themeColor="textSecondary">
@@ -337,11 +395,11 @@ export function HomeFeed() {
           ) : undefined
         }
         ListFooterComponent={
-          items?.length && nextCursor ? (
+          visibleItems?.length && visibleNextCursor ? (
             <View style={styles.footer}>
-              {feedError ? <Atom.ErrorMessage>{feedError}</Atom.ErrorMessage> : null}
+              {visibleFeedError ? <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage> : null}
               <Atom.Button
-                label={loadingMore ? 'Loading…' : feedError ? 'Try loading more' : 'Load more'}
+                label={loadingMore ? 'Loading…' : visibleFeedError ? 'Try loading more' : 'Load more'}
                 variant="secondary"
                 loading={loadingMore}
                 onPress={loadMore}
@@ -358,7 +416,7 @@ export function HomeFeed() {
           />
         }
         onEndReached={() => {
-          if (nextCursor) void loadMore();
+          if (visibleNextCursor) void loadMore();
         }}
         onEndReachedThreshold={0.5}
         contentContainerStyle={styles.listContent}

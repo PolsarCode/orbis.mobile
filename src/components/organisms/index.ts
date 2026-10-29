@@ -7,3 +7,4 @@ export * from './home-feed';
 export * from './member-profile';
 export * from './oauth-buttons';
 export * from './server-status';
+export * from './settings-panel';

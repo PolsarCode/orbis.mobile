@@ -24,10 +24,12 @@ jest.mock('@/lib/api', () => ({
   getProfile: jest.fn(),
   login: jest.fn(),
   signup: jest.fn(),
+  updatePreferences: jest.fn(),
   setUnauthorizedHandler: jest.fn(),
 }));
 
 const getProfile = api.getProfile as jest.Mock;
+const updatePreferences = api.updatePreferences as jest.Mock;
 const setUnauthorizedHandler = api.setUnauthorizedHandler as jest.Mock;
 const unauthorizedHandler: (token: string) => void = setUnauthorizedHandler.mock.calls[0][0];
 
@@ -41,7 +43,10 @@ function profileFor(userId: number, username: string): api.Profile {
     backgroundUrl: null,
     theme: 'dark',
     appearOffline: false,
+    status: 'online',
     isPublic: true,
+    showNsfw: false,
+    showChangelog: true,
     isAdmin: false,
     isHeadAdmin: false,
     emailVerifiedAt: '2026-10-01T00:00:00.000Z',
@@ -52,8 +57,15 @@ function profileFor(userId: number, username: string): api.Profile {
 describe('auth store', () => {
   beforeEach(() => {
     getProfile.mockReset();
+    updatePreferences.mockReset();
     (clearOAuthState as jest.Mock).mockClear();
-    useAuthStore.setState({ token: null, profile: null, sessionExpired: false });
+    useAuthStore.setState({
+      token: null,
+      profile: null,
+      sessionExpired: false,
+      preferencesPending: false,
+      preferencesVersion: 0,
+    });
   });
 
   it('ignores a profile that arrives after switching accounts', async () => {
@@ -96,5 +108,37 @@ describe('auth store', () => {
     useAuthStore.getState().loginWithToken('token-c');
 
     expect(useAuthStore.getState().sessionExpired).toBe(false);
+  });
+
+  it('updates preferences and refreshes the preference version on success', async () => {
+    const profile = profileFor(1, 'naruto');
+    const updatedProfile = { ...profile, showNsfw: true };
+    useAuthStore.setState({ token: 'token-a', profile });
+    updatePreferences.mockResolvedValueOnce(updatedProfile);
+
+    await useAuthStore.getState().updatePreferences({ showNsfw: true });
+
+    expect(updatePreferences).toHaveBeenCalledWith('token-a', { showNsfw: true });
+    expect(useAuthStore.getState()).toMatchObject({
+      profile: updatedProfile,
+      preferencesPending: false,
+      preferencesVersion: 1,
+    });
+  });
+
+  it('rolls back failed preference updates and refreshes affected data', async () => {
+    const profile = profileFor(1, 'naruto');
+    useAuthStore.setState({ token: 'token-a', profile });
+    updatePreferences.mockRejectedValueOnce(new Error('Could not save your preferences.'));
+
+    await expect(
+      useAuthStore.getState().updatePreferences({ showNsfw: true }),
+    ).rejects.toThrow('Could not save your preferences.');
+
+    expect(useAuthStore.getState()).toMatchObject({
+      profile,
+      preferencesPending: false,
+      preferencesVersion: 1,
+    });
   });
 });

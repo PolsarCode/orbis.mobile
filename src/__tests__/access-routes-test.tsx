@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 import { Text } from 'react-native';
 
@@ -63,7 +63,10 @@ function profile(isAdmin: boolean): api.Profile {
     backgroundUrl: null,
     theme: 'dark',
     appearOffline: false,
+    status: 'online',
     isPublic: true,
+    showNsfw: false,
+    showChangelog: true,
     isAdmin,
     isHeadAdmin: false,
     emailVerifiedAt: '2026-10-01T00:00:00.000Z',
@@ -118,7 +121,7 @@ describe('role-restricted routes', () => {
     getCommunity.mockResolvedValue({ id: 5, name: 'Konoha', iconUrl: null, role: 'member' });
 
     await renderRouter(routes, { initialUrl: '/communities/5' });
-    await act(() => router.push('/communities/5/settings'));
+    await act(() => router.push('/communities/5/settings' as Href));
 
     expect(await screen.findByText('Only the owner and admins can make changes to Konoha.')).toBeTruthy();
     await fireEvent.press(screen.getByText('Back to community'));

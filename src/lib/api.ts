@@ -13,6 +13,7 @@ export const WEB_URL = (
 export type LoginCredentials = { identifier: string; password: string };
 
 export type SignupDetails = { email: string; username: string; password: string };
+export type ThemeMode = 'system' | 'light' | 'dark';
 export type OAuthProvider = 'discord' | 'twitch';
 export type OAuthConnection = {
   provider: OAuthProvider;
@@ -46,9 +47,12 @@ export type Profile = {
   avatarUrl: string | null;
   coverUrl: string | null;
   backgroundUrl: string | null;
-  theme: string;
+  theme: ThemeMode;
   appearOffline: boolean;
+  status: Exclude<PresenceStatus, 'offline' | 'streaming'>;
   isPublic: boolean;
+  showNsfw: boolean;
+  showChangelog: boolean;
   isAdmin: boolean;
   isHeadAdmin: boolean;
   emailVerifiedAt: string | null;
@@ -56,6 +60,10 @@ export type Profile = {
 };
 
 export type CommunityRole = 'owner' | 'admin' | 'member';
+
+export type ProfilePreferences = Partial<
+  Pick<Profile, 'theme' | 'appearOffline' | 'status' | 'isPublic' | 'showNsfw' | 'showChangelog'>
+>;
 
 export type Community = {
   id: number;
@@ -441,6 +449,32 @@ export async function resendConfirmation(token: string): Promise<{ confirmed: bo
   });
   if (!res.ok) throw new Error(await errorMessage(res, 'Couldn’t send the email.'));
   return res.json();
+}
+
+export async function updatePreferences(
+  token: string,
+  preferences: ProfilePreferences,
+): Promise<Profile> {
+  const res = await api('/users/me/preferences', {
+    method: 'PATCH',
+    headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(preferences),
+  });
+  if (!res.ok) {
+    throw new Error(await errorMessage(res, 'Could not save your preferences.'));
+  }
+  return res.json();
+}
+
+export async function resetOnboardingTours(token: string): Promise<void> {
+  const res = await api('/users/me/onboarding', {
+    method: 'PATCH',
+    headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resetTours: true }),
+  });
+  if (!res.ok) {
+    throw new Error(await errorMessage(res, 'Could not restart the tours.'));
+  }
 }
 
 export async function getPublicProfile(

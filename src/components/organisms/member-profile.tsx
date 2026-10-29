@@ -91,6 +91,8 @@ export function MemberProfile({ username: initialUsername }: { username?: string
   const username = initialUsername ?? params.username ?? '';
   const token = useAuthStore((state) => state.token);
   const signedInProfile = useAuthStore((state) => state.profile);
+  const preferencesPending = useAuthStore((state) => state.preferencesPending);
+  const preferencesVersion = useAuthStore((state) => state.preferencesVersion);
   const logout = useAuthStore((state) => state.logout);
   const fetchCurrentProfile = useAuthStore((state) => state.fetchProfile);
   const theme = useTheme();
@@ -109,7 +111,7 @@ export function MemberProfile({ username: initialUsername }: { username?: string
   const [pendingImage, setPendingImage] = useState<ProfileImage | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [profileAttempt, setProfileAttempt] = useState(0);
-  const currentLoaded = loaded?.username === username ? loaded : null;
+  const currentLoaded = !preferencesPending && loaded?.username === username ? loaded : null;
   const profile = currentLoaded?.profile ?? null;
   const activeTab =
     isProfileTab(requestedTab) &&
@@ -134,6 +136,7 @@ export function MemberProfile({ username: initialUsername }: { username?: string
   }, [fetchCurrentProfile, signedInProfile, token]);
 
   useEffect(() => {
+    if (preferencesPending) return;
     let active = true;
     getPublicProfile(token, username)
       .then((result) => {
@@ -145,7 +148,7 @@ export function MemberProfile({ username: initialUsername }: { username?: string
     return () => {
       active = false;
     };
-  }, [profileAttempt, token, username]);
+  }, [preferencesPending, preferencesVersion, profileAttempt, token, username]);
 
   useEffect(() => {
     if (!contentUsername) return;

@@ -6,22 +6,29 @@ import {
   ThemeProvider,
 } from 'expo-router';
 import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import { Appearance, useColorScheme } from 'react-native';
 
 import { useAuthHydrated, useAuthStore } from '@/stores/auth-store';
+import { useThemeHydrated, useThemeStore } from '@/stores/theme-store';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const hydrated = useAuthHydrated();
+  const themeHydrated = useThemeHydrated();
+  const themeMode = useThemeStore((state) => state.mode);
   const signedIn = useAuthStore((state) => Boolean(state.token));
 
   useEffect(() => {
-    if (hydrated) SplashScreen.hide();
-  }, [hydrated]);
+    Appearance.setColorScheme(themeMode === 'system' ? 'auto' : themeMode);
+  }, [themeMode]);
 
-  if (!hydrated) return null;
+  useEffect(() => {
+    if (hydrated && themeHydrated) SplashScreen.hide();
+  }, [hydrated, themeHydrated]);
+
+  if (!hydrated || !themeHydrated) return null;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
