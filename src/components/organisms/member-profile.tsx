@@ -431,6 +431,13 @@ export function MemberProfile({ username: initialUsername }: { username?: string
               variant="secondary"
               onPress={() => router.push('/settings' as Href)}
             />
+            {signedInProfile?.isAdmin ? (
+              <Atom.Button
+                label="Site admin directory"
+                variant="secondary"
+                onPress={() => router.push('/directory' as Href)}
+              />
+            ) : null}
             <Atom.Button label="Log out" variant="secondary" onPress={signOut} />
           </View>
         ) : null}

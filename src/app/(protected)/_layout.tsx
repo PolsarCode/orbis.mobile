@@ -34,8 +34,9 @@ export default function ProtectedLayout() {
   const segments = useSegments();
   const next = safeNext(pathWithQuery(pathname, params, segments));
   const isPublicProfile = pathname.startsWith('/users/');
+  const isPublicCommunity = /^\/communities\/[^/]+$/.test(pathname);
 
-  if (!signedIn && !isPublicProfile) {
+  if (!signedIn && !isPublicProfile && !isPublicCommunity) {
     return <Redirect href={{ pathname: '/login', params: next ? { next } : undefined }} />;
   }
 

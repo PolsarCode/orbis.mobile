@@ -62,6 +62,68 @@ export type Community = {
   name: string;
   iconUrl: string | null;
   role?: CommunityRole | null;
+  description?: string | null;
+  coverUrl?: string | null;
+  backgroundUrl?: string | null;
+  ownerId?: number;
+  isPublic?: boolean;
+  isVerified?: boolean;
+  memberCount?: number;
+};
+
+export type CommunityPerson = {
+  id: number;
+  username: string;
+  name: string | null;
+  avatarUrl: string | null;
+};
+
+export type CommunitySearchResult = {
+  id: number;
+  name: string;
+  description: string | null;
+  iconUrl: string | null;
+  coverUrl: string | null;
+  isVerified: boolean;
+  memberCount: number;
+  joined: boolean;
+  members: CommunityPerson[];
+  mutuals: CommunityPerson[];
+  mutualCount: number;
+};
+
+export type DirectoryUser = {
+  userId: number;
+  username: string;
+  name: string | null;
+  email: string;
+  emailVerifiedAt: string | null;
+  avatarUrl: string | null;
+  coverUrl: string | null;
+  isAdmin: boolean;
+  isHeadAdmin: boolean;
+  isVerified: boolean;
+  communityCount: number;
+  createdAt: string;
+};
+
+export type DirectoryCommunity = {
+  id: number;
+  name: string;
+  iconUrl: string | null;
+  coverUrl: string | null;
+  isPublic: boolean;
+  isVerified: boolean;
+  memberCount: number;
+  owner: { id: number; username: string; name: string | null; avatarUrl: string | null };
+  createdAt: string;
+};
+
+export type NumberedPage<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 
 export type Author = {
@@ -523,7 +585,7 @@ export async function getCommunities(token: string): Promise<Community[]> {
   return res.json();
 }
 
-export async function getCommunity(token: string, id: string): Promise<Community | null> {
+export async function getCommunity(token: string | null, id: string): Promise<Community | null> {
   const res = await api(`/communities/${encodeURIComponent(id)}`, { headers: authHeaders(token) });
   if (res.status === 403 || res.status === 404) return null;
   if (!res.ok) throw new Error(await errorMessage(res, 'Could not load this community.'));
@@ -543,7 +605,10 @@ export async function searchPeople(token: string, query: string): Promise<Author
   return res.json();
 }
 
-export async function searchCommunities(token: string, query: string): Promise<Community[]> {
+export async function searchCommunities(
+  token: string,
+  query: string,
+): Promise<CommunitySearchResult[]> {
   const params = new URLSearchParams({ q: query });
   const res = await api(`/communities/search?${params.toString()}`, {
     headers: authHeaders(token),
@@ -552,10 +617,93 @@ export async function searchCommunities(token: string, query: string): Promise<C
   return res.json();
 }
 
+export async function joinCommunity(token: string, communityId: number): Promise<Community> {
+  const res = await api(`/communities/${communityId}/join`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (res.status === 404) throw new Error('This community is no longer public.');
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not join the community.'));
+  return res.json();
+}
+
+export async function getDirectoryUsers(
+  token: string,
+  page: number,
+): Promise<NumberedPage<DirectoryUser>> {
+  const res = await api(`/admin/users?page=${page}`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not load users.'));
+  return res.json();
+}
+
+export async function getDirectoryCommunities(
+  token: string,
+  page: number,
+): Promise<NumberedPage<DirectoryCommunity>> {
+  const res = await api(`/admin/communities?page=${page}`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not load communities.'));
+  return res.json();
+}
+
+export async function setProfileVerified(
+  token: string,
+  username: string,
+  isVerified: boolean,
+): Promise<boolean> {
+  const res = await api(`/users/${encodeURIComponent(username)}/verified`, {
+    method: isVerified ? 'PUT' : 'DELETE',
+    headers: authHeaders(token),
+  });
+  if (res.status === 403) throw new Error('Only the head admin can verify profiles.');
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not update verification.'));
+  return (await res.json()).isVerified;
+}
+
+export async function setCommunityVerified(
+  token: string,
+  communityId: number,
+  isVerified: boolean,
+): Promise<boolean> {
+  const res = await api(`/communities/${communityId}/verified`, {
+    method: isVerified ? 'PUT' : 'DELETE',
+    headers: authHeaders(token),
+  });
+  if (res.status === 403) throw new Error('Only the head admin can verify communities.');
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not update verification.'));
+  return (await res.json()).isVerified;
+}
+
+export async function setProfileAdmin(
+  token: string,
+  username: string,
+  isAdmin: boolean,
+): Promise<boolean> {
+  const res = await api(`/users/${encodeURIComponent(username)}/admin`, {
+    method: isAdmin ? 'PUT' : 'DELETE',
+    headers: authHeaders(token),
+  });
+  if (res.status === 403) throw new Error('Only the head admin can change site admins.');
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not update admin access.'));
+  return (await res.json()).isAdmin;
+}
+
 export async function getFeed(token: string, cursor?: string): Promise<Page<FeedEntry>> {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
   const res = await api(`/feed${query}`, { headers: authHeaders(token) });
   if (!res.ok) throw new Error(await errorMessage(res, 'Could not load your feed.'));
+  return res.json();
+}
+
+export async function getCommunityPosts(
+  token: string | null,
+  communityId: number,
+  cursor?: string,
+): Promise<Page<FeedEntry>> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  const res = await api(`/communities/${communityId}/posts${query}`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not load community posts.'));
   return res.json();
 }
 

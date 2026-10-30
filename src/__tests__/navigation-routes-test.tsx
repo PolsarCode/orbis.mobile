@@ -46,11 +46,11 @@ describe('app routes', () => {
     useAuthStore.setState({ token: null, profile: null, sessionExpired: false });
   });
 
-  it('sends a signed-out deep link to log in and keeps the full destination', async () => {
+  it('allows guests to open a public community deep link', async () => {
     await renderRouter(routes, { initialUrl: '/communities/5?post=5' });
 
-    expect(await screen.findByText('Log in')).toBeTruthy();
-    expect(screen).toHavePathnameWithParams('/login?next=%2Fcommunities%2F5%3Fpost%3D5');
+    expect(await screen.findByText('Community')).toBeTruthy();
+    expect(screen).toHavePathnameWithParams('/communities/5?post=5');
   });
 
   it('opens web-only links on the not-yet-in-the-app screen', async () => {

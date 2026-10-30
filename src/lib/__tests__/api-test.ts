@@ -2,9 +2,14 @@ import {
   api,
   createWallPost,
   getCommunity,
+  getCommunityPosts,
+  getDirectoryUsers,
   getProfile,
   getUserPosts,
+  joinCommunity,
   login,
+  searchCommunities,
+  setProfileVerified,
   setUnauthorizedHandler,
 } from '../api';
 
@@ -92,5 +97,51 @@ describe('api requests', () => {
 
     fetchMock.mockReturnValueOnce(respond(500, { message: 'Internal server error' }));
     await expect(getCommunity('token', '5')).rejects.toThrow();
+  });
+
+  it('uses the existing Explore search and join endpoints', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(200, []))
+      .mockReturnValueOnce(respond(200, { id: 5, name: 'Konoha', iconUrl: null }));
+
+    await searchCommunities('token', 'leaf village');
+    await joinCommunity('token', 5);
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/communities/search?q=leaf+village');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/communities/5/join');
+    expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+  });
+
+  it('uses existing admin directory and verification endpoints', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(200, { items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockReturnValueOnce(respond(200, { isVerified: true }));
+
+    await getDirectoryUsers('token', 2);
+    await expect(setProfileVerified('token', 'sakura', true)).resolves.toBe(true);
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/admin/users?page=2');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/users/sakura/verified');
+    expect(fetchMock.mock.calls[1][1].method).toBe('PUT');
+  });
+
+  it('loads community activity using the shared feed cursor contract', async () => {
+    fetchMock.mockReturnValue(respond(200, { items: [], nextCursor: null }));
+
+    await getCommunityPosts('token', 5, 'next-page');
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/communities/5/posts?cursor=next-page');
+  });
+
+  it('uses the guest-compatible community read endpoints without leaking an account token', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(200, { id: 5, name: 'Konoha' }))
+      .mockReturnValueOnce(respond(200, { items: [], nextCursor: null }));
+
+    await getCommunity(null, '5');
+    await getCommunityPosts(null, 5);
+
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBeUndefined();
   });
 });
