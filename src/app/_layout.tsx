@@ -6,10 +6,11 @@ import {
   ThemeProvider,
 } from 'expo-router';
 import { useEffect, useRef } from 'react';
-import { AppState, Appearance, useColorScheme, View } from 'react-native';
+import { AppState, Appearance, useColorScheme, View, type AppStateStatus } from 'react-native';
 
 import { useAuthHydrated, useAuthStore } from '@/stores/auth-store';
 import { useFriendsStore } from '@/stores/friends-store';
+import { useMessagesStore } from '@/stores/messages-store';
 import { useThemeHydrated, useThemeStore } from '@/stores/theme-store';
 
 SplashScreen.preventAutoHideAsync();
@@ -27,6 +28,8 @@ export default function RootLayout() {
   const disconnectFriends = useFriendsStore((state) => state.disconnect);
   const setIdle = useFriendsStore((state) => state.setIdle);
   const activityHandler = useRef<() => void>(() => {});
+  const connectMessages = useMessagesStore((state) => state.connect);
+  const disconnectMessages = useMessagesStore((state) => state.disconnect);
 
   useEffect(() => {
     Appearance.setColorScheme(themeMode === 'system' ? 'auto' : themeMode);
@@ -84,6 +87,25 @@ export default function RootLayout() {
       disconnectFriends();
     };
   }, [connectFriends, disconnectFriends, hydrated, setIdle, token]);
+
+  useEffect(() => {
+    if (!hydrated || !token) {
+      disconnectMessages();
+      return;
+    }
+
+    function onAppStateChange(state: AppStateStatus) {
+      if (state === 'active') connectMessages();
+      else disconnectMessages();
+    }
+
+    if (AppState.currentState === 'active') connectMessages();
+    const subscription = AppState.addEventListener('change', onAppStateChange);
+    return () => {
+      subscription.remove();
+      disconnectMessages();
+    };
+  }, [connectMessages, disconnectMessages, hydrated, token]);
 
   if (!hydrated || !themeHydrated) return null;
 

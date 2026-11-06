@@ -36,6 +36,7 @@ import {
 } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 import { useFriendsStore } from '@/stores/friends-store';
+import { useMessagesStore } from '@/stores/messages-store';
 import { PostComposer } from './post-composer';
 
 const profileTabs = [
@@ -121,6 +122,8 @@ export function MemberProfile({ username: initialUsername }: { username?: string
   const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | 'all'>('all');
   const [hiddenTypes, setHiddenTypes] = useState<FeedContentType[]>([]);
   const [pendingImage, setPendingImage] = useState<ProfileImage | null>(null);
+  const [openingChat, setOpeningChat] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [profileAttempt, setProfileAttempt] = useState(0);
   const profileRequestKey = `${preferencesVersion}:${profileAttempt}`;
@@ -142,6 +145,25 @@ export function MemberProfile({ username: initialUsername }: { username?: string
   function signOut() {
     logout();
     router.replace('/');
+  }
+
+  async function openChat() {
+    if (!profile || !token) return;
+    setOpeningChat(true);
+    setChatError(null);
+    try {
+      const id = await useMessagesStore.getState().openDirect({
+        userId: profile.userId,
+        username: profile.username,
+        name: profile.name,
+        avatarUrl: profile.avatarUrl,
+      });
+      router.push(`/messages/${id}` as Href);
+    } catch (cause) {
+      setChatError(cause instanceof Error ? cause.message : 'Could not open this chat.');
+    } finally {
+      setOpeningChat(false);
+    }
   }
 
   useEffect(() => {
@@ -482,6 +504,16 @@ export function MemberProfile({ username: initialUsername }: { username?: string
               />
             ) : null}
             <Atom.Button label="Log out" variant="secondary" onPress={signOut} />
+          </View>
+        ) : null}
+        {!isSelf && signedInProfile && token ? (
+          <View style={styles.accountActions}>
+            <Atom.Button
+              label={openingChat ? 'Opening chat…' : 'Message'}
+              loading={openingChat}
+              onPress={() => void openChat()}
+            />
+            {chatError ? <Atom.ErrorMessage>{chatError}</Atom.ErrorMessage> : null}
           </View>
         ) : null}
 

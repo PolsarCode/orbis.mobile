@@ -22,6 +22,7 @@ const titles: Record<string, string> = {
   directory: 'Directory',
   reports: 'Reports',
   friends: 'Friends',
+  'messages/[conversationId]': 'Conversation',
   'users/[username]': 'Profile',
   'communities/[communityId]': 'Community',
   'communities/[communityId]/members': 'Members',

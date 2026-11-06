@@ -29,6 +29,17 @@ jest.mock('@/lib/storage', () => {
   };
 });
 
+jest.mock('socket.io-client', () => ({
+  io: jest.fn(() => ({
+    on: jest.fn().mockReturnThis(),
+    emit: jest.fn(),
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+    removeAllListeners: jest.fn(),
+    connected: false,
+  })),
+}));
+
 jest.mock('@/lib/api', () => ({
   ...jest.requireActual('@/lib/api'),
   getProfile: jest.fn(),
@@ -75,7 +86,9 @@ const routes = {
   register: stub('Sign up'),
   '(protected)/_layout': { default: ProtectedLayout, unstable_settings },
   '(protected)/(tabs)/index': stub('Home'),
+  '(protected)/(tabs)/messages': stub('Messages'),
   '(protected)/(tabs)/communities': CommunitiesTab,
+  '(protected)/messages/[conversationId]': stub('Conversation'),
   '(protected)/directory': DirectoryScreen,
   '(protected)/reports': ReportsScreen,
   '(protected)/communities/[communityId]': CommunityDetailScreen,
@@ -487,5 +500,14 @@ describe('role-restricted routes', () => {
     await renderRouter(routes, { initialUrl: '/communities/404/settings' });
 
     expect(await screen.findByText('Only a community’s owner and admins can change its settings.')).toBeTruthy();
+  });
+
+  it('opens a direct conversation as a protected full-screen route', async () => {
+    getProfile.mockResolvedValue(profile(false));
+
+    await renderRouter(routes, { initialUrl: '/messages/8' });
+
+    expect(await screen.findByText('Conversation')).toBeTruthy();
+    expect(router.canGoBack()).toBe(true);
   });
 });

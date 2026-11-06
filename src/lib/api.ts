@@ -237,15 +237,69 @@ export type Post = {
   wallUser: Author | null;
 };
 
-export type PresenceStatus = 'online' | 'idle' | 'busy' | 'streaming' | 'offline';
-export type UserStatus = Exclude<PresenceStatus, 'offline' | 'streaming'>;
-export type LibraryStatus = 'current' | 'completed' | 'on_hold' | 'dropped' | 'planned';
-export type MediaType = 'anime' | 'manga' | 'game';
+export type ChatPerson = {
+  userId: number;
+  username: string;
+  name: string | null;
+  avatarUrl: string | null;
+};
 
 export type HiddenBecause =
   | { kind: 'muted' }
   | { kind: 'blocked' }
   | { kind: 'filtered'; phrase: string };
+
+export type ChatReply = {
+  id: number;
+  senderId: number;
+  sender: ChatPerson;
+  text: string;
+  hiddenBecause?: HiddenBecause | null;
+};
+
+export type ChatReaction = { emoji: string; userIds: number[] };
+
+export type ChatMessage = {
+  id: number;
+  senderId: number;
+  sender: ChatPerson;
+  text: string;
+  system: boolean;
+  sentAt: string;
+  editedAt: string | null;
+  replyTo: ChatReply | null;
+  reactions: ChatReaction[];
+  hiddenBecause?: HiddenBecause | null;
+};
+
+export type Conversation = {
+  id: number;
+  isGroup: boolean;
+  name: string | null;
+  creatorId: number | null;
+  members: ChatPerson[];
+  lastText: string;
+  lastSenderId: number | null;
+  lastSystem: boolean;
+  lastAt: string;
+  unread: number;
+  status: 'accepted' | 'request';
+  canMessage?: boolean;
+};
+
+export type ChatMember = ChatPerson & { readAt: string | null };
+
+export type ChatHistory = {
+  messages: ChatMessage[];
+  members: ChatMember[];
+  hasMore: boolean;
+  canMessage?: boolean;
+};
+
+export type PresenceStatus = 'online' | 'idle' | 'busy' | 'streaming' | 'offline';
+export type UserStatus = Exclude<PresenceStatus, 'offline' | 'streaming'>;
+export type LibraryStatus = 'current' | 'completed' | 'on_hold' | 'dropped' | 'planned';
+export type MediaType = 'anime' | 'manga' | 'game';
 
 export type FriendUser = {
   userId: number;
@@ -945,6 +999,103 @@ export async function deleteCommunity(token: string, communityId: number): Promi
 
 export function canManage(community: Community) {
   return community.role === 'owner' || community.role === 'admin';
+}
+
+function messagesRequest(token: string, path: string, method = 'POST', body?: unknown) {
+  return api(`/messages${path}`, {
+    method,
+    headers: {
+      ...authHeaders(token),
+      ...(body !== undefined && { 'Content-Type': 'application/json' }),
+    },
+    ...(body !== undefined && { body: JSON.stringify(body) }),
+  });
+}
+
+export async function searchChatPeople(token: string, query: string): Promise<ChatPerson[]> {
+  const params = new URLSearchParams({ q: query });
+  const res = await api(`/friends/search?${params.toString()}`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not search people.'));
+  return res.json();
+}
+
+export async function getConversations(token: string): Promise<Conversation[]> {
+  const res = await messagesRequest(token, '', 'GET');
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not load your messages.'));
+  return res.json();
+}
+
+export async function openDirectChat(token: string, userId: number): Promise<Conversation> {
+  const res = await messagesRequest(token, `/direct/${userId}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not open this chat.'));
+  return res.json();
+}
+
+export async function getChatHistory(
+  token: string,
+  id: number,
+  before?: number,
+): Promise<ChatHistory> {
+  const query = before === undefined ? '' : `?before=${before}`;
+  const res = await messagesRequest(token, `/${id}${query}`, 'GET');
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not load this chat.'));
+  return res.json();
+}
+
+export async function sendMessage(
+  token: string,
+  id: number,
+  text: string,
+  replyToId?: number,
+): Promise<ChatMessage> {
+  const res = await messagesRequest(token, `/${id}`, 'POST', { text, replyToId });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not send your message.'));
+  return res.json();
+}
+
+export async function editMessage(
+  token: string,
+  id: number,
+  messageId: number,
+  text: string,
+): Promise<ChatMessage> {
+  const res = await messagesRequest(token, `/${id}/messages/${messageId}`, 'PATCH', { text });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not edit your message.'));
+  return res.json();
+}
+
+export async function reactToMessage(
+  token: string,
+  id: number,
+  messageId: number,
+  emoji: string,
+): Promise<ChatMessage> {
+  const res = await messagesRequest(token, `/${id}/messages/${messageId}/reaction`, 'POST', {
+    emoji,
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not react to this message.'));
+  return res.json();
+}
+
+export async function markMessagesRead(token: string, id: number): Promise<void> {
+  const res = await messagesRequest(token, `/${id}/read`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Could not mark messages as read.'));
+}
+
+export async function acceptMessageRequest(token: string, id: number): Promise<void> {
+  const res = await messagesRequest(token, `/${id}/accept`);
+  if (!res.ok && res.status !== 404) {
+    throw new Error(await errorMessage(res, 'Could not accept the request.'));
+  }
+}
+
+export async function declineMessageRequest(token: string, id: number): Promise<void> {
+  const res = await messagesRequest(token, `/${id}`, 'DELETE');
+  if (!res.ok && res.status !== 404) {
+    throw new Error(await errorMessage(res, 'Could not decline the request.'));
+  }
 }
 
 export async function searchPeople(token: string, query: string): Promise<FriendUser[]> {
