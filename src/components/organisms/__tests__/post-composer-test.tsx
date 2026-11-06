@@ -60,6 +60,20 @@ describe('post composer', () => {
     expect(searchPeople).toHaveBeenCalledWith('token', 'sa');
   });
 
+  it('applies a custom length limit to the text and the formatted content', async () => {
+    const onPost = jest.fn().mockResolvedValue(undefined);
+    await renderRouter({ index: () => <PostComposer onPost={onPost} maxLength={12} /> });
+    const input = screen.getByLabelText('Write something…');
+
+    expect(input.props.maxLength).toBe(12);
+    await fireEvent.changeText(input, 'twelve chars');
+    expect(screen.getByText('12/12')).toBeTruthy();
+    await fireEvent.press(screen.getByText('Post'));
+
+    expect(await screen.findByText('Formatted content is too long. Shorten it before posting.')).toBeTruthy();
+    expect(onPost).not.toHaveBeenCalled();
+  });
+
   it('does not send duplicate posts while a submission is pending', async () => {
     let finish!: () => void;
     const onPost = jest.fn(() => new Promise<void>((resolve) => {

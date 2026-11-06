@@ -7,6 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { searchPeople, type Friend, type FriendUser } from '@/lib/api';
 import { presenceLabel, presenceStatus } from '@/lib/presence';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 import { useFriendsStore } from '@/stores/friends-store';
 
@@ -70,8 +71,17 @@ function PersonCard({
   );
 }
 
+function ReadOnlyHint({ action }: { action: string }) {
+  return (
+    <Atom.ThemedText type="small" themeColor="textSecondary">
+      {`Confirm your email first to ${action}.`}
+    </Atom.ThemedText>
+  );
+}
+
 export function FriendsManagement() {
   const theme = useTheme();
+  const readOnly = useReadOnly();
   const token = useAuthStore((state) => state.token);
   const friends = useFriendsStore((state) => state.friends);
   const incoming = useFriendsStore((state) => state.incoming);
@@ -253,6 +263,13 @@ export function FriendsManagement() {
                 const isFriend = friendsById.has(person.userId);
                 const isIncoming = incoming.some((item) => item.userId === person.userId);
                 const isOutgoing = outgoing.some((item) => item.userId === person.userId);
+                const readOnlyAction = isIncoming
+                  ? 'answer friend requests'
+                  : isFriend
+                    ? 'remove friends'
+                    : isOutgoing
+                      ? 'cancel friend requests'
+                      : 'add friends';
                 return (
                   <View key={person.userId} style={styles.actionCard}>
                     <PersonCard person={person} />
@@ -262,14 +279,14 @@ export function FriendsManagement() {
                           <Atom.Button
                             label="Accept"
                             loading={pendingAction === `${token}:${person.userId}:add`}
-                            disabled={pendingAction?.startsWith(`${token}:`) ?? false}
+                            disabled={readOnly || (pendingAction?.startsWith(`${token}:`) ?? false)}
                             onPress={() => void runAction(person.userId, 'add')}
                           />
                           <Atom.Button
                             label="Reject"
                             variant="secondary"
                             loading={pendingAction === `${token}:${person.userId}:remove`}
-                            disabled={pendingAction?.startsWith(`${token}:`) ?? false}
+                            disabled={readOnly || (pendingAction?.startsWith(`${token}:`) ?? false)}
                             onPress={() => void runAction(person.userId, 'remove')}
                           />
                         </>
@@ -278,11 +295,12 @@ export function FriendsManagement() {
                           label={isFriend ? 'Remove friend' : isOutgoing ? 'Cancel request' : 'Send request'}
                           variant="secondary"
                           loading={pendingAction !== null && pendingAction.startsWith(`${token}:${person.userId}:`)}
-                          disabled={pendingAction?.startsWith(`${token}:`) ?? false}
+                          disabled={readOnly || (pendingAction?.startsWith(`${token}:`) ?? false)}
                           onPress={() => void runAction(person.userId, isFriend || isOutgoing ? 'remove' : 'add')}
                         />
                       )}
                     </View>
+                    {readOnly ? <ReadOnlyHint action={readOnlyAction} /> : null}
                   </View>
                 );
               })}
@@ -358,7 +376,7 @@ export function FriendsManagement() {
                       <Atom.Button
                         label="Accept"
                         loading={pendingAction === `${token}:${person.userId}:add`}
-                        disabled={pendingAction?.startsWith(`${token}:`) ?? false}
+                        disabled={readOnly || (pendingAction?.startsWith(`${token}:`) ?? false)}
                         onPress={() => void runAction(person.userId, 'add')}
                       />
                     ) : null}
@@ -366,10 +384,13 @@ export function FriendsManagement() {
                       label={received ? 'Reject' : 'Cancel request'}
                       variant="secondary"
                       loading={pendingAction === `${token}:${person.userId}:remove`}
-                      disabled={pendingAction?.startsWith(`${token}:`) ?? false}
+                      disabled={readOnly || (pendingAction?.startsWith(`${token}:`) ?? false)}
                       onPress={() => void runAction(person.userId, 'remove')}
                     />
                   </View>
+                  {readOnly ? (
+                    <ReadOnlyHint action={received ? 'answer friend requests' : 'cancel friend requests'} />
+                  ) : null}
                 </View>
               ))
             ) : loaded && !failed ? (

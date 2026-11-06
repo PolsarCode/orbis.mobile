@@ -202,7 +202,6 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 returnKeyType="done"
                 onSubmitEditing={handleSubmit}
                 placeholder="Your password"
-                style={{ backgroundColor: theme.background, borderColor: theme.divider }}
               />
             </View>
           </View>

@@ -1,5 +1,6 @@
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { HeaderHeightContext } from 'expo-router/react-navigation';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -18,14 +19,17 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { chatTitle, displayName, MESSAGE_MAX_LENGTH, MESSAGE_REACTIONS } from '@/lib/chat';
 import type { ChatMessage } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 import { markConversationViewing, useMessagesStore } from '@/stores/messages-store';
+
+const noTypers: number[] = [];
 
 function MessageItem({
   message,
   mine,
   me,
-  isRequest,
+  locked,
   showReactions,
   onToggleReactions,
   onReply,
@@ -35,7 +39,7 @@ function MessageItem({
   message: ChatMessage;
   mine: boolean;
   me: number;
-  isRequest: boolean;
+  locked: boolean;
   showReactions: boolean;
   onToggleReactions: () => void;
   onReply: (message: ChatMessage) => void;
@@ -71,7 +75,13 @@ function MessageItem({
         <Atom.ThemedText type="small" themeColor="textSecondary" style={mine && styles.alignRight}>
           {sender}
         </Atom.ThemedText>
-        {message.replyTo && !message.replyTo.hiddenBecause ? (
+        {message.replyTo?.hiddenBecause ? (
+          <View style={[styles.replyQuote, { backgroundColor: theme.backgroundElement }]}>
+            <Atom.ThemedText type="small" themeColor="textSecondary" style={styles.hiddenReply}>
+              Message from someone you blocked
+            </Atom.ThemedText>
+          </View>
+        ) : message.replyTo ? (
           <View style={[styles.replyQuote, { backgroundColor: theme.backgroundElement }]}>
             <Atom.ThemedText type="smallBold">
               {message.replyTo.senderId === me ? 'You' : displayName(message.replyTo.sender)}
@@ -99,7 +109,7 @@ function MessageItem({
         <Atom.ThemedText type="small" themeColor="textSecondary" style={mine && styles.alignRight}>
           {sentTime}
         </Atom.ThemedText>
-        {!isRequest && !message.hiddenBecause ? (
+        {!locked && !message.hiddenBecause ? (
           <>
             <View style={[styles.messageTools, mine && styles.messageToolsMine]}>
               <Pressable
@@ -149,7 +159,7 @@ function MessageItem({
                 key={reaction.emoji}
                 accessibilityRole="button"
                 accessibilityLabel={`${reaction.emoji}, ${reaction.userIds.length} reactions`}
-                disabled={isRequest}
+                disabled={locked}
                 onPress={() => onReact(message, reaction.emoji)}
                 style={[
                   styles.reaction,
@@ -176,13 +186,15 @@ export function ChatConversation() {
   const id = Number(rawId);
   const validId = Number.isSafeInteger(id) && id > 0;
   const theme = useTheme();
+  const headerHeight = useContext(HeaderHeightContext) ?? 0;
+  const readOnly = useReadOnly();
   const token = useAuthStore((state) => state.token);
   const me = useAuthStore((state) => state.profile?.userId);
   const conversation = useMessagesStore((state) =>
     validId ? state.conversations.find((item) => item.id === id) : undefined,
   );
   const history = useMessagesStore((state) => validId ? state.histories[id] : undefined);
-  const typers = useMessagesStore((state) => validId ? state.typing[id] ?? [] : []);
+  const typers = useMessagesStore((state) => validId ? state.typing[id] ?? noTypers : noTypers);
   const loaded = useMessagesStore((state) => state.loaded);
   const failed = useMessagesStore((state) => state.failed);
   const error = useMessagesStore((state) => state.error);
@@ -427,7 +439,8 @@ export function ChatConversation() {
       <SafeAreaView style={styles.screen} edges={['bottom', 'left', 'right']}>
         <KeyboardAvoidingView
           style={[styles.screen, { backgroundColor: theme.background }]}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={headerHeight}>
           {history?.loadingOlder ? <ActivityIndicator color={theme.accent} /> : null}
           {history?.failed ? (
             <View style={styles.loadError}>
@@ -478,7 +491,7 @@ export function ChatConversation() {
                 message={item}
                 mine={item.senderId === me}
                 me={me ?? 0}
-                isRequest={Boolean(request)}
+                locked={Boolean(request) || readOnly || !canSend}
                 showReactions={reactionTarget === item.id}
                 onToggleReactions={() =>
                   setReactionTarget((current) => current === item.id ? null : item.id)
@@ -516,19 +529,24 @@ export function ChatConversation() {
                 <Atom.Button
                   label="Accept"
                   loading={actionLoading}
-                  disabled={actionLoading}
+                  disabled={readOnly || actionLoading}
                   onPress={() => void runAction(() => acceptRequest(id))}
                 />
                 <Atom.Button
                   label="Delete request"
                   variant="secondary"
-                  disabled={actionLoading}
+                  disabled={readOnly || actionLoading}
                   onPress={() => void runAction(async () => {
                     await declineRequest(id);
                     router.back();
                   })}
                 />
               </View>
+              {readOnly ? (
+                <Atom.ThemedText type="small" themeColor="textSecondary">
+                  Confirm your email first to answer message requests.
+                </Atom.ThemedText>
+              ) : null}
             </View>
           ) : null}
           <View style={[styles.composer, { borderTopColor: theme.divider }]}>
@@ -562,7 +580,11 @@ export function ChatConversation() {
                 </Pressable>
               </View>
             ) : null}
-            {canSend ? (
+            {canSend && readOnly ? (
+              <Atom.ThemedText type="small" themeColor="textSecondary">
+                Confirm your email to send messages.
+              </Atom.ThemedText>
+            ) : canSend ? (
               <View style={styles.composerRow}>
                 <Atom.Input
                   accessibilityLabel={`Message ${title}`}
@@ -584,7 +606,7 @@ export function ChatConversation() {
               </View>
             ) : (
               <Atom.ThemedText type="small" themeColor="textSecondary">
-                You can’t send messages in this conversation.
+                You can’t message this person.
               </Atom.ThemedText>
             )}
           </View>
@@ -662,6 +684,9 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.one,
+  },
+  hiddenReply: {
+    fontStyle: 'italic',
   },
   bubble: {
     maxWidth: '100%',

@@ -6,8 +6,9 @@ import * as Molecule from '@molecule';
 
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useReadOnly } from '@/lib/read-only';
 import { findTextUrl } from '@/lib/rich-content';
-import type { FeedEntry } from '@/lib/api';
+import type { Author, FeedEntry, HiddenBecause, QuotedItem, QuotedPost, RepostedBy } from '@/lib/api';
 import { CommentSection } from './comment-section';
 
 type FeedCardProps = {
@@ -29,6 +30,21 @@ function relativeTime(date: string) {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
   return new Date(date).toLocaleDateString();
+}
+
+function hiddenLabelOf(hiddenBecause: HiddenBecause | null | undefined) {
+  if (!hiddenBecause) return null;
+  if (hiddenBecause.kind === 'muted') return 'From someone you muted';
+  if (hiddenBecause.kind === 'blocked') return 'Message from someone you blocked';
+  return `Hidden because it mentions “${hiddenBecause.phrase}”`;
+}
+
+function displayNameOf(author: Author) {
+  return author.name || author.username;
+}
+
+function openProfile(username: string) {
+  router.push(`/users/${encodeURIComponent(username)}` as Href);
 }
 
 function activityText(activity: Extract<FeedEntry, { type: 'activity' }>): [string, string] {
@@ -62,18 +78,14 @@ export function FeedCard({
   compact = false,
 }: FeedCardProps) {
   const theme = useTheme();
+  const readOnly = useReadOnly();
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [showSpoiler, setShowSpoiler] = useState(false);
+  const [likeHint, setLikeHint] = useState(false);
   const author = item.author;
-  const displayName = author.name || author.username;
-  const hiddenLabel = item.hiddenBecause?.kind === 'muted'
-    ? 'From someone you muted'
-    : item.hiddenBecause?.kind === 'blocked'
-      ? 'Message from someone you blocked'
-      : item.hiddenBecause?.kind === 'filtered'
-        ? `Hidden because it mentions “${item.hiddenBecause.phrase}”`
-        : null;
+  const displayName = displayNameOf(author);
+  const hiddenLabel = hiddenLabelOf(item.hiddenBecause);
   const postContext =
     item.type === 'post'
       ? context
@@ -108,10 +120,11 @@ export function FeedCard({
         </View>
       ) : (
         <>
+          {item.repostedBy ? <RepostedByLabel repostedBy={item.repostedBy} /> : null}
           <Pressable
             accessibilityRole="link"
             accessibilityLabel={`View ${displayName}’s profile`}
-            onPress={() => router.push(`/users/${encodeURIComponent(author.username)}` as Href)}
+            onPress={() => openProfile(author.username)}
             style={styles.authorRow}>
             {author.avatarUrl ? (
               <Image source={{ uri: author.avatarUrl }} style={styles.avatar} />
@@ -189,6 +202,7 @@ export function FeedCard({
                 <>
                   {item.content ? <Molecule.RichContent content={item.content} /> : null}
                   {previewUrl ? <Molecule.LinkPreview url={previewUrl} /> : null}
+                  {item.quote ? <QuoteEmbed quote={item.quote} /> : null}
                 </>
               )}
             </View>
@@ -198,8 +212,13 @@ export function FeedCard({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={item.liked ? 'Unlike' : 'Like'}
-              onPress={() => onLike(item)}
-              style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
+              accessibilityHint={readOnly ? 'Confirm your email first to like this.' : undefined}
+              accessibilityState={{ disabled: readOnly }}
+              onPress={() => (readOnly ? setLikeHint(true) : onLike(item))}
+              style={({ pressed }) => [
+                styles.action,
+                readOnly ? styles.disabled : pressed && styles.pressed,
+              ]}>
               <Atom.ThemedText
                 type="smallBold"
                 style={{ color: item.liked ? theme.accent : theme.text }}>
@@ -217,6 +236,11 @@ export function FeedCard({
               </Atom.ThemedText>
             </Pressable>
           </View>
+          {readOnly && likeHint ? (
+            <Atom.ThemedText type="small" themeColor="textSecondary">
+              Confirm your email first to like this.
+            </Atom.ThemedText>
+          ) : null}
           {commentsOpen ? (
             <CommentSection
               target={{ type: item.type, id: item.id }}
@@ -227,6 +251,126 @@ export function FeedCard({
         </>
       )}
     </View>
+  );
+}
+
+function RepostedByLabel({ repostedBy }: { repostedBy: RepostedBy }) {
+  const [first] = repostedBy.people;
+  if (!first) return null;
+  const others = repostedBy.total - 1;
+  return (
+    <Atom.ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+      Reposted by{' '}
+      <Atom.ThemedText
+        type="smallBold"
+        accessibilityRole="link"
+        onPress={() => openProfile(first.username)}>
+        {displayNameOf(first)}
+      </Atom.ThemedText>
+      {others > 0 ? ` and ${others} ${others === 1 ? 'other' : 'others'}` : ''}
+    </Atom.ThemedText>
+  );
+}
+
+function QuoteEmbed({ quote }: { quote: QuotedItem }) {
+  const theme = useTheme();
+  const [showHidden, setShowHidden] = useState(false);
+  const boxStyle = [styles.quote, { borderColor: theme.divider }];
+
+  if (!quote.available) {
+    return (
+      <View style={[...boxStyle, styles.unavailable, { backgroundColor: theme.backgroundElement }]}>
+        <Atom.ThemedText type="small" themeColor="textSecondary">
+          This post isn’t available
+        </Atom.ThemedText>
+      </View>
+    );
+  }
+
+  const hiddenBecause = quote.type === 'post' ? quote.post.hiddenBecause : quote.activity.hiddenBecause;
+  const hiddenLabel = hiddenLabelOf(hiddenBecause);
+  if (hiddenLabel && !showHidden) {
+    return (
+      <View style={[styles.gate, { backgroundColor: theme.backgroundElement, borderColor: theme.divider }]}>
+        <Atom.ThemedText type="smallBold" style={styles.gateLabel}>
+          {hiddenLabel}
+        </Atom.ThemedText>
+        <Atom.Button
+          label={hiddenBecause?.kind === 'filtered' ? 'Show anyway' : 'Show'}
+          variant="secondary"
+          onPress={() => setShowHidden(true)}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={boxStyle}>
+      {quote.type === 'post' ? (
+        <QuotedPostBody post={quote.post} />
+      ) : (
+        <QuotedActivityBody activity={quote.activity} />
+      )}
+    </View>
+  );
+}
+
+function QuotedPostBody({ post }: { post: QuotedPost }) {
+  const theme = useTheme();
+  const [showSpoiler, setShowSpoiler] = useState(false);
+  const wallUser = post.wallUser && post.wallUser.id !== post.author.id ? post.wallUser : null;
+  const where = post.community?.name
+    ?? (wallUser ? `${displayNameOf(wallUser)}’s wall` : post.media?.title);
+
+  return (
+    <>
+      <Atom.ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+        <Atom.ThemedText
+          type="smallBold"
+          accessibilityRole="link"
+          onPress={() => openProfile(post.author.username)}>
+          {displayNameOf(post.author)}
+        </Atom.ThemedText>
+        {where ? ` · ${where}` : ''}
+        {' · '}
+        {relativeTime(post.createdAt)}
+      </Atom.ThemedText>
+      {post.spoiler !== null && post.spoiler !== undefined && !showSpoiler ? (
+        <View style={[styles.gate, { backgroundColor: theme.backgroundElement, borderColor: theme.divider }]}>
+          <Atom.ThemedText type="smallBold" style={styles.gateLabel}>
+            {post.spoiler || 'Spoiler'}
+          </Atom.ThemedText>
+          <Atom.Button label="Show" variant="secondary" onPress={() => setShowSpoiler(true)} />
+        </View>
+      ) : post.content ? (
+        <Molecule.RichContent content={post.content} />
+      ) : null}
+    </>
+  );
+}
+
+function QuotedActivityBody({ activity }: { activity: Extract<FeedEntry, { type: 'activity' }> }) {
+  const [verb, suffix] = activityText(activity);
+  return (
+    <>
+      <Atom.ThemedText type="small" themeColor="textSecondary">
+        <Atom.ThemedText
+          type="smallBold"
+          accessibilityRole="link"
+          onPress={() => openProfile(activity.author.username)}>
+          {displayNameOf(activity.author)}
+        </Atom.ThemedText>
+        {` ${verb} `}
+        <Atom.ThemedText type="smallBold">{activity.media.title}</Atom.ThemedText>
+        {suffix ? ` ${suffix}` : ''}
+      </Atom.ThemedText>
+      <Atom.ThemedText type="small" themeColor="textSecondary">
+        {activity.media.type}
+        {activity.media.year ? ` · ${activity.media.year}` : ''}
+        {' · '}
+        {relativeTime(activity.createdAt)}
+      </Atom.ThemedText>
+    </>
   );
 }
 
@@ -314,5 +458,17 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.65,
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+  quote: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: Spacing.two,
+    gap: Spacing.one,
+  },
+  unavailable: {
+    borderStyle: 'dashed',
   },
 });

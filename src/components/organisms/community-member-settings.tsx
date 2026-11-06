@@ -12,6 +12,7 @@ import {
   type Community,
   type Member,
 } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 
 type Loaded = { key: string; member: Member | null; error: string | null };
@@ -21,6 +22,7 @@ export function CommunityMemberSettings({ community }: { community: Community })
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
   const { profile, failed: profileFailed, retry: retryProfile } = useCurrentProfile();
+  const readOnly = useReadOnly();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [nicknameDrafts, setNicknameDrafts] = useState<Record<string, string>>({});
@@ -76,7 +78,7 @@ export function CommunityMemberSettings({ community }: { community: Community })
   }, [community.id, community.role, profile, requestKey, token]);
 
   async function saveNickname() {
-    if (!token || !current?.member || nicknamePending) return;
+    if (!token || !current?.member || nicknamePending || readOnly) return;
     setNicknameFeedback(null);
     setNicknamePendingKey(requestKey);
     try {
@@ -106,7 +108,7 @@ export function CommunityMemberSettings({ community }: { community: Community })
   }
 
   async function changeLibraryUpdates(next: boolean) {
-    if (!token || updatesPending) return;
+    if (!token || updatesPending || readOnly) return;
     const previous = showUpdates;
     setUpdatesOverride({ key: requestKey, value: next });
     setUpdatesFeedback(null);
@@ -176,6 +178,7 @@ export function CommunityMemberSettings({ community }: { community: Community })
               autoCapitalize="words"
               maxLength={32}
               placeholder={current.member.name || current.member.username}
+              editable={!readOnly}
               value={nickname}
               onChangeText={(value) => {
                 setNicknameDrafts((drafts) => ({ ...drafts, [requestKey]: value }));
@@ -188,9 +191,14 @@ export function CommunityMemberSettings({ community }: { community: Community })
             <Atom.Button
               label="Save nickname"
               loading={nicknamePending}
-              disabled={nickname.trim() === savedNickname}
+              disabled={readOnly || nickname.trim() === savedNickname}
               onPress={saveNickname}
             />
+            {readOnly ? (
+              <Atom.ThemedText type="small" themeColor="textSecondary">
+                Confirm your email first to change your nickname.
+              </Atom.ThemedText>
+            ) : null}
             {nicknameError ? <Atom.ErrorMessage>{nicknameError}</Atom.ErrorMessage> : null}
             {nicknameMessage ? (
               <Atom.ThemedText type="small" themeColor="textSecondary">
@@ -215,14 +223,19 @@ export function CommunityMemberSettings({ community }: { community: Community })
           <Switch
             accessibilityLabel={`Share library updates with ${community.name}`}
             accessibilityRole="switch"
-            accessibilityState={{ checked: showUpdates, disabled: updatesPending }}
-            disabled={updatesPending}
+            accessibilityState={{ checked: showUpdates, disabled: updatesPending || readOnly }}
+            disabled={updatesPending || readOnly}
             value={showUpdates}
             trackColor={{ false: theme.backgroundSelected, true: theme.accent }}
             thumbColor={theme.surface}
             onValueChange={(next) => void changeLibraryUpdates(next)}
           />
         </View>
+        {readOnly ? (
+          <Atom.ThemedText type="small" themeColor="textSecondary">
+            Confirm your email first to change this.
+          </Atom.ThemedText>
+        ) : null}
         {updatesPending ? (
           <Atom.ThemedText type="small" themeColor="textSecondary">Saving…</Atom.ThemedText>
         ) : null}

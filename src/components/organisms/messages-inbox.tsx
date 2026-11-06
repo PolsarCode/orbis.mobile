@@ -17,8 +17,9 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { chatPreview, chatTitle, displayName } from '@/lib/chat';
 import { searchChatPeople, type ChatPerson, type Conversation } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
-import { useMessagesStore } from '@/stores/messages-store';
+import { directConversationWith, useMessagesStore } from '@/stores/messages-store';
 
 type Folder = 'chats' | 'requests';
 
@@ -26,10 +27,12 @@ function PersonRow({
   person,
   onPress,
   loading,
+  disabled,
 }: {
   person: ChatPerson;
   onPress: () => void;
   loading: boolean;
+  disabled: boolean;
 }) {
   const theme = useTheme();
   const name = displayName(person);
@@ -48,7 +51,7 @@ function PersonRow({
           @{person.username}
         </Atom.ThemedText>
       </View>
-      <Atom.Button label="Message" loading={loading} onPress={onPress} />
+      <Atom.Button label="Message" loading={loading} disabled={disabled} onPress={onPress} />
     </View>
   );
 }
@@ -93,6 +96,7 @@ function ConversationRow({
 
 export function MessagesInbox() {
   const theme = useTheme();
+  const readOnly = useReadOnly();
   const token = useAuthStore((state) => state.token);
   const me = useAuthStore((state) => state.profile?.userId);
   const conversations = useMessagesStore((state) => state.conversations);
@@ -100,6 +104,7 @@ export function MessagesInbox() {
   const loading = useMessagesStore((state) => state.loading);
   const failed = useMessagesStore((state) => state.failed);
   const connected = useMessagesStore((state) => state.connected);
+  const connectionError = useMessagesStore((state) => state.connectionError);
   const error = useMessagesStore((state) => state.error);
   const refresh = useMessagesStore((state) => state.refresh);
   const openDirect = useMessagesStore((state) => state.openDirect);
@@ -114,6 +119,8 @@ export function MessagesInbox() {
   const people = results?.key === searchKey ? results.people : undefined;
   const searchError = results?.key === searchKey ? results.error : undefined;
   const searching = searchLoading === searchKey;
+  const startLocked = (person: ChatPerson) =>
+    readOnly && !directConversationWith(conversations, person.userId);
   const listed = useMemo(
     () => conversations.filter(({ lastSenderId }) => lastSenderId !== null),
     [conversations],
@@ -218,7 +225,7 @@ export function MessagesInbox() {
 
       {!connected ? (
         <Atom.ThemedText type="small" themeColor="textSecondary">
-          Live updates reconnect when your connection is available.
+          {connectionError ?? 'Live updates reconnect when your connection is available.'}
         </Atom.ThemedText>
       ) : null}
       {error ? <Atom.ErrorMessage>{error}</Atom.ErrorMessage> : null}
@@ -245,6 +252,11 @@ export function MessagesInbox() {
             value={query}
             onChangeText={setQuery}
           />
+          {people?.some(startLocked) ? (
+            <Atom.ThemedText type="small" themeColor="textSecondary">
+              Confirm your email first to send messages.
+            </Atom.ThemedText>
+          ) : null}
           {normalizedQuery.length === 1 ? (
             <Atom.ThemedText type="small" themeColor="textSecondary">
               Enter at least 2 characters to search.
@@ -257,6 +269,7 @@ export function MessagesInbox() {
               key={person.userId}
               person={person}
               loading={openingUser === person.userId}
+              disabled={startLocked(person)}
               onPress={() => void startChat(person)}
             />
           ))}

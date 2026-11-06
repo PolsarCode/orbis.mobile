@@ -7,6 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { useCurrentProfile } from '@/hooks/use-current-profile';
 import { useTheme } from '@/hooks/use-theme';
 import { joinCommunity, searchCommunities, type CommunitySearchResult } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 import { CommunitySwitcher } from './community-switcher';
 
@@ -140,7 +141,8 @@ export function CommunityExplorer() {
   const requestKey = `${token ?? ''}:${normalizedQuery}:${attempt}`;
   const current = loaded?.key === requestKey ? loaded.results : null;
   const error = loaded?.key === requestKey ? loaded.error : null;
-  const readOnly = !profile || profile.emailVerifiedAt === null;
+  const readOnly = useReadOnly();
+  const joinLocked = !profile || readOnly;
 
   useFocusEffect(useCallback(() => {
     if (hasFocused.current) setAttempt((value) => value + 1);
@@ -172,7 +174,7 @@ export function CommunityExplorer() {
   }, [normalizedQuery, requestKey, token]);
 
   async function handleJoin(community: CommunitySearchResult) {
-    if (!token || joining !== null || readOnly) return;
+    if (!token || joining !== null || joinLocked) return;
     setJoining(community.id);
     setJoinError(null);
     try {
@@ -199,9 +201,15 @@ export function CommunityExplorer() {
         <Atom.Button
           label="Create"
           variant="secondary"
+          disabled={readOnly}
           onPress={() => router.push('/communities/create' as Href)}
         />
       </View>
+      {readOnly ? (
+        <Atom.ThemedText type="small" themeColor="textSecondary">
+          Confirm your email first to create a community.
+        </Atom.ThemedText>
+      ) : null}
       <Atom.Input
         accessibilityLabel="Search public communities"
         autoCapitalize="none"
@@ -245,7 +253,7 @@ export function CommunityExplorer() {
           key={community.id}
           community={community}
           joining={joining}
-          readOnly={readOnly}
+          readOnly={joinLocked}
           onJoin={handleJoin}
         />
       ))}

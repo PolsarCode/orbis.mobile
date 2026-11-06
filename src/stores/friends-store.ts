@@ -73,11 +73,13 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
       client.emit('idle', idle);
       void get().fetchFriends().catch(() => undefined);
     });
-    client.on('disconnect', () => {
+    client.on('disconnect', (reason: Socket.DisconnectReason) => {
       if (socket === client) {
         set({
           connected: false,
-          connectionError: 'The live connection was lost. Reconnecting…',
+          connectionError: reason === 'io server disconnect'
+            ? 'The live connection was closed. Tap Reconnect to try again.'
+            : 'The live connection was lost. Reconnecting…',
         });
       }
     });

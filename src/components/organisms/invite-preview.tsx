@@ -4,37 +4,53 @@ import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
 import * as Atom from '@atom';
 
 import { Spacing } from '@/constants/theme';
+import { useCurrentProfile } from '@/hooks/use-current-profile';
 import { useTheme } from '@/hooks/use-theme';
-import { acceptInvite, getInvitePreview, type InvitePreview as InvitePreviewData } from '@/lib/api';
+import {
+  acceptInvite,
+  getCommunity,
+  getInvitePreview,
+  type InvitePreview as InvitePreviewData,
+} from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 
 type LoadedPreview = {
   key: string;
   preview: InvitePreviewData | null;
+  member: boolean;
   error: string | null;
 };
 
 export function InvitePreview({ code }: { code: string }) {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
+  useCurrentProfile();
+  const readOnly = useReadOnly();
   const [loadedPreview, setLoadedPreview] = useState<LoadedPreview | null>(null);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const key = `${code}:${attempt}`;
+  const key = `${token ?? ''}:${code}:${attempt}`;
   const current = loadedPreview?.key === key ? loadedPreview : null;
 
   useEffect(() => {
     let active = true;
     getInvitePreview(code)
-      .then((result) => {
-        if (active) setLoadedPreview({ key, preview: result, error: null });
+      .then(async (result) => {
+        const community = result && token
+          ? await getCommunity(token, String(result.community.id)).catch(() => null)
+          : null;
+        if (active) {
+          setLoadedPreview({ key, preview: result, member: Boolean(community?.role), error: null });
+        }
       })
       .catch((cause: unknown) => {
         if (active) {
           setLoadedPreview({
             key,
             preview: null,
+            member: false,
             error: cause instanceof Error ? cause.message : 'Could not load the invite.',
           });
         }
@@ -42,7 +58,7 @@ export function InvitePreview({ code }: { code: string }) {
     return () => {
       active = false;
     };
-  }, [code, key]);
+  }, [code, key, token]);
 
   function openAuth(mode: 'login' | 'register') {
     const next = `/invite/${encodeURIComponent(code)}`;
@@ -50,7 +66,7 @@ export function InvitePreview({ code }: { code: string }) {
   }
 
   async function handleAccept() {
-    if (!token || !current?.preview || accepting) return;
+    if (!token || !current?.preview || accepting || readOnly) return;
     setAcceptError(null);
     setAccepting(true);
     try {
@@ -72,20 +88,28 @@ export function InvitePreview({ code }: { code: string }) {
     );
   }
 
-  if (current.error || !current.preview) {
+  if (current.error) {
     return (
       <View style={styles.state}>
-        <Atom.ThemedText type="subtitle">Invite unavailable</Atom.ThemedText>
-        <Atom.ErrorMessage>
-          {current.error ?? 'This invite is invalid or has expired.'}
-        </Atom.ErrorMessage>
-        {current.error ? (
-          <Atom.Button
-            label="Try again"
-            variant="secondary"
-            onPress={() => setAttempt((value) => value + 1)}
-          />
-        ) : null}
+        <Atom.ErrorMessage>{current.error}</Atom.ErrorMessage>
+        <Atom.Button
+          label="Try again"
+          variant="secondary"
+          onPress={() => setAttempt((value) => value + 1)}
+        />
+      </View>
+    );
+  }
+
+  if (!current.preview) {
+    return (
+      <View style={styles.state}>
+        <Atom.ThemedText type="subtitle">Invite invalid.</Atom.ThemedText>
+        <Atom.ThemedText type="small" themeColor="textSecondary">
+          This invite may have expired, reached its limit, or been revoked. Ask whoever sent it for
+          a new one.
+        </Atom.ThemedText>
+        <Atom.Button label="Go to Orbis" variant="secondary" onPress={() => router.replace('/')} />
       </View>
     );
   }
@@ -114,8 +138,33 @@ export function InvitePreview({ code }: { code: string }) {
             This invite expires {new Date(preview.expiresAt).toLocaleString()}.
           </Atom.ThemedText>
         ) : null}
-        {token ? (
-          <Atom.Button label="Join community" loading={accepting} onPress={handleAccept} />
+        {token && current.member ? (
+          <>
+            <Atom.ThemedText type="small" themeColor="textSecondary">
+              You’re already a member of {preview.community.name}.
+            </Atom.ThemedText>
+            <Atom.Button
+              label="Open community"
+              onPress={() => router.replace(`/communities/${preview.community.id}` as Href)}
+            />
+          </>
+        ) : token ? (
+          <>
+            {readOnly ? (
+              <View style={styles.actions}>
+                <Atom.ThemedText type="smallBold">Confirm your email first to join.</Atom.ThemedText>
+                <Atom.ThemedText type="small" themeColor="textSecondary">
+                  Open the link we emailed you, then come back to this invite.
+                </Atom.ThemedText>
+              </View>
+            ) : null}
+            <Atom.Button
+              label="Join community"
+              loading={accepting}
+              disabled={readOnly}
+              onPress={handleAccept}
+            />
+          </>
         ) : (
           <View style={styles.actions}>
             <Atom.Button label="Log in to join" onPress={() => openAuth('login')} />

@@ -15,6 +15,7 @@ import {
   type FeedEntry,
 } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
+import { EmailConfirmNotice } from './email-confirm-notice';
 import { FeedCard } from './feed-card';
 import { PostComposer } from './post-composer';
 
@@ -227,7 +228,20 @@ export function CommunityDetail({ communityId }: { communityId: string }) {
         <Atom.ThemedText type="small" themeColor="textSecondary">
           {currentCommunity.description || 'No description yet.'}
         </Atom.ThemedText>
-        {!isMember ? (
+        {!token ? (
+          <>
+            <Atom.ThemedText type="small" themeColor="textSecondary">
+              Log in to join this community, post, comment, and take part in discussions.
+            </Atom.ThemedText>
+            <Atom.Button
+              label="Log in to join"
+              onPress={() => router.push({
+                pathname: '/login',
+                params: { next: `/communities/${encodeURIComponent(communityId)}` },
+              })}
+            />
+          </>
+        ) : !isMember ? (
           <>
             <Atom.Button
               label={readOnly ? (profile ? 'Confirm email to join' : 'Checking account…') : 'Join community'}
@@ -278,7 +292,9 @@ export function CommunityDetail({ communityId }: { communityId: string }) {
         {joinError ? <Atom.ErrorMessage>{joinError}</Atom.ErrorMessage> : null}
       </View>
 
-      {isMember && profile?.emailVerifiedAt ? (
+      {isMember && profile?.emailVerifiedAt === null ? (
+        <EmailConfirmNotice email={profile.email} />
+      ) : isMember && profile?.emailVerifiedAt ? (
         <PostComposer
           placeholder={`Share something with ${currentCommunity.name}…`}
           onPost={handlePost}

@@ -24,6 +24,7 @@ type MessagesState = {
   loading: boolean;
   failed: boolean;
   connected: boolean;
+  connectionError: string | null;
   error: string | null;
   connect: () => void;
   disconnect: () => void;
@@ -54,6 +55,7 @@ const empty = {
   loading: false,
   failed: false,
   connected: false,
+  connectionError: null,
   error: null,
 };
 
@@ -99,6 +101,38 @@ function patchHistory(
   });
 }
 
+function joinsLatestPage(history: History, page: ChatHistory) {
+  const known = new Set(history.messages.map(({ id }) => id));
+  return !page.hasMore || page.messages.some(({ id }) => known.has(id));
+}
+
+function withLatestPage(history: History, page: ChatHistory): History {
+  if (!joinsLatestPage(history, page)) {
+    const newest = page.messages.at(-1)?.id ?? 0;
+    return {
+      ...history,
+      ...page,
+      messages: mergeMessages(page.messages, history.messages.filter(({ id }) => id > newest)),
+      loadingOlder: false,
+    };
+  }
+  return {
+    ...history,
+    members: page.members,
+    canMessage: page.canMessage,
+    messages: mergeMessages(history.messages, page.messages),
+    hasMore: page.hasMore && history.hasMore,
+  };
+}
+
+export function directConversationWith(conversations: Conversation[], userId: number) {
+  return conversations.find(
+    (conversation) =>
+      !conversation.isGroup &&
+      conversation.members.some((member) => member.userId === userId),
+  );
+}
+
 export function markConversationViewing(id: number, active: boolean) {
   if (active) viewing.add(id);
   else viewing.delete(id);
@@ -121,11 +155,42 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
 
     client.on('connect', () => {
       if (socket !== client || useAuthStore.getState().token !== token) return;
-      set({ connected: true, error: null });
+      set({ connected: true, connectionError: null, error: null });
       void get().refresh().catch(() => undefined);
+      const stale = Object.entries(get().histories)
+        .filter(([key, history]) => !viewing.has(Number(key)) && !history.loading)
+        .map(([key]) => Number(key));
+      stale.forEach((id) => historyRequests.delete(id));
+      set((state) => {
+        const histories = { ...state.histories };
+        stale.forEach((id) => delete histories[id]);
+        return { histories };
+      });
+      viewing.forEach((id) => {
+        const history = get().histories[id];
+        if (!history || history.loading) return;
+        if (history.failed) {
+          void get().loadHistory(id).catch(() => undefined);
+          return;
+        }
+        void api.getChatHistory(token, id)
+          .then((page) => {
+            const current = get().histories[id];
+            if (!current || useAuthStore.getState().token !== token) return;
+            if (!joinsLatestPage(current, page)) historyRequests.delete(id);
+            patchHistory(set, id, (latest) => withLatestPage(latest, page));
+          })
+          .catch(() => undefined);
+      });
     });
-    client.on('disconnect', () => {
-      if (socket === client) set({ connected: false });
+    client.on('disconnect', (reason: Socket.DisconnectReason) => {
+      if (socket !== client) return;
+      set({
+        connected: false,
+        connectionError: reason === 'io server disconnect'
+          ? 'Live updates stopped. Reopen Orbis to reconnect.'
+          : null,
+      });
     });
     client.on('connect_error', (cause: Error) => {
       if (socket === client) {
@@ -155,7 +220,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
   disconnect: () => {
     refreshSequence += 1;
     closeSocket();
-    set({ connected: false, loading: false });
+    set({ connected: false, connectionError: null, loading: false });
   },
   refresh: async () => {
     const { token } = useAuthStore.getState();
@@ -287,8 +352,8 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
   markRead: async (id) => {
     const conversation = get().conversations.find((item) => item.id === id);
     if (!conversation || conversation.status !== 'accepted' || conversation.unread === 0) return;
-    const token = useAuthStore.getState().token;
-    if (!token) return;
+    const { token, profile } = useAuthStore.getState();
+    if (!token || profile?.emailVerifiedAt === null) return;
     const readKey = `${token}:${id}`;
     if (markingRead.has(readKey)) return;
     markingRead.add(readKey);
@@ -330,11 +395,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     if (useAuthStore.getState().token === token) get().removed(id);
   },
   openDirect: async (person) => {
-    const existing = get().conversations.find(
-      (conversation) =>
-        !conversation.isGroup &&
-        conversation.members.some((member) => member.userId === person.userId),
-    );
+    const existing = directConversationWith(get().conversations, person.userId);
     if (existing) return existing.id;
     const token = tokenOrThrow();
     const conversation = await api.openDirectChat(token, person.userId);

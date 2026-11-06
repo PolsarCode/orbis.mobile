@@ -1,5 +1,5 @@
-import { router, usePathname, type Href } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { router, useFocusEffect, type Href } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, View } from 'react-native';
 import * as Atom from '@atom';
 
@@ -22,10 +22,11 @@ import {
   ungroupCommunityFolder,
   updateCommunityFolder,
 } from '@/lib/community-layout';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 
 type Loaded = {
-  key: string;
+  token: string;
   communities: Community[];
   layout: RailItem[];
   error: string | null;
@@ -34,12 +35,14 @@ type Loaded = {
 function CommunityRow({
   community,
   selected,
+  disabled,
   onSelect,
   onMoveUp,
   onMoveDown,
 }: {
   community: Community;
   selected: boolean;
+  disabled: boolean;
   onSelect: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -69,23 +72,28 @@ function CommunityRow({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${selected ? 'Deselect' : 'Select'} ${community.name} for a folder`}
-          accessibilityState={{ selected }}
+          accessibilityState={{ selected, disabled }}
+          disabled={disabled}
           onPress={onSelect}
-          style={[styles.action, { borderColor: theme.divider }]}>
+          style={[styles.action, { borderColor: theme.divider }, disabled && styles.disabled]}>
           <Atom.ThemedText type="small">{selected ? 'Selected' : 'Select'}</Atom.ThemedText>
         </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Move ${community.name} up`}
+          accessibilityState={{ disabled }}
+          disabled={disabled}
           onPress={onMoveUp}
-          style={[styles.action, { borderColor: theme.divider }]}>
+          style={[styles.action, { borderColor: theme.divider }, disabled && styles.disabled]}>
           <Atom.ThemedText type="small">Up</Atom.ThemedText>
         </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Move ${community.name} down`}
+          accessibilityState={{ disabled }}
+          disabled={disabled}
           onPress={onMoveDown}
-          style={[styles.action, { borderColor: theme.divider }]}>
+          style={[styles.action, { borderColor: theme.divider }, disabled && styles.disabled]}>
           <Atom.ThemedText type="small">Down</Atom.ThemedText>
         </Pressable>
       </View>
@@ -93,47 +101,74 @@ function CommunityRow({
   );
 }
 
+function keepUnsavedDrafts<T>(drafts: Record<number, T>, layout: RailItem[], savedFolderId?: number) {
+  const kept = new Set(
+    layout.flatMap((item) => item.type === 'folder' && item.id !== savedFolderId ? [item.id] : []),
+  );
+  return Object.fromEntries(
+    Object.entries(drafts).filter(([id]) => kept.has(Number(id))),
+  ) as Record<number, T>;
+}
+
 export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
-  const pathname = usePathname();
+  const readOnly = useReadOnly();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [attempt, setAttempt] = useState(0);
+  const [reload, setReload] = useState(0);
+  const hasFocused = useRef(false);
+  const saveCount = useRef(0);
+  const savePending = useRef(false);
   const [savingToken, setSavingToken] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [folderName, setFolderName] = useState('');
   const [folderNames, setFolderNames] = useState<Record<number, string>>({});
   const [folderColors, setFolderColors] = useState<Record<number, string | null>>({});
-  const key = `${token ?? ''}:${attempt}:${refreshKey}:${pathname}`;
   const saving = Boolean(token && savingToken === token);
-  const current = loaded?.key === key ? loaded : null;
+  const current = token && loaded?.token === token ? loaded : null;
   const currentError = current?.error ?? null;
+  const locked = saving || readOnly;
   const communityById = useMemo(
     () => new Map((current?.communities ?? []).map((community) => [community.id, community])),
     [current?.communities],
   );
 
+  useFocusEffect(useCallback(() => {
+    if (hasFocused.current) setReload((value) => value + 1);
+    else hasFocused.current = true;
+  }, []));
+
   useEffect(() => {
     if (!token) return;
 
     let active = true;
+    const savesBefore = saveCount.current;
+    const startedDuringSave = savePending.current;
+    const outdated = () =>
+      !active ||
+      useAuthStore.getState().token !== token ||
+      startedDuringSave ||
+      savePending.current ||
+      saveCount.current !== savesBefore;
     Promise.all([getCommunities(token), getRailLayout(token)])
       .then(([communities, layout]) => {
-        if (!active || useAuthStore.getState().token !== token) return;
+        if (outdated()) return;
         setLoaded({
-          key,
+          token,
           communities,
           layout: normalizeCommunityLayout(layout, communities.map(({ id }) => id)),
           error: null,
         });
         setSelectedIds([]);
+        setFolderNames({});
+        setFolderColors({});
         setSaveError(null);
       })
       .catch((cause: unknown) => {
-        if (!active || useAuthStore.getState().token !== token) return;
+        if (outdated()) return;
         setLoaded({
-          key,
+          token,
           communities: [],
           layout: [],
           error: cause instanceof Error ? cause.message : 'Could not load your communities.',
@@ -143,30 +178,33 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
     return () => {
       active = false;
     };
-  }, [key, token]);
+  }, [refreshKey, reload, token]);
 
-  async function saveLayout(nextLayout: RailItem[]) {
-    if (!token || !current || saving) return;
+  async function saveLayout(nextLayout: RailItem[], savedFolderId?: number) {
+    if (!token || !current || locked) return;
     const previous = current;
     const normalized = normalizeCommunityLayout(nextLayout, previous.communities.map(({ id }) => id));
     setLoaded({ ...previous, layout: normalized, error: null });
     setSavingToken(token);
     setSaveError(null);
+    saveCount.current += 1;
+    savePending.current = true;
     try {
-      const saved = await updateRailLayout(token, normalized);
+      const saved = normalizeCommunityLayout(
+        await updateRailLayout(token, normalized),
+        previous.communities.map(({ id }) => id),
+      );
       if (useAuthStore.getState().token !== token) return;
-      setLoaded((value) => value?.key === key
-        ? {
-            ...value,
-            layout: normalizeCommunityLayout(saved, previous.communities.map(({ id }) => id)),
-          }
-        : value);
+      setLoaded((value) => value?.token === token ? { ...value, layout: saved } : value);
+      setFolderNames((drafts) => keepUnsavedDrafts(drafts, saved, savedFolderId));
+      setFolderColors((drafts) => keepUnsavedDrafts(drafts, saved, savedFolderId));
     } catch (cause) {
       if (useAuthStore.getState().token === token) {
-        setLoaded((value) => value?.key === key ? previous : value);
+        setLoaded((value) => value?.token === token ? previous : value);
         setSaveError(cause instanceof Error ? cause.message : 'Could not save your communities.');
       }
     } finally {
+      savePending.current = false;
       setSavingToken((value) => value === token ? null : value);
     }
   }
@@ -178,10 +216,10 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
   }
 
   function makeFolder() {
-    if (!current || selectedIds.length < 2) return;
+    if (!current || selectedIds.length < 2 || locked) return;
     const folder: RailFolder = {
       type: 'folder',
-      id: -Date.now(),
+      id: -1,
       name: folderName.trim() || null,
       color: null,
       communityIds: selectedIds,
@@ -204,7 +242,7 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
     void saveLayout(updateCommunityFolder(current.layout, folder.id, {
       name: (folderNames[folder.id] ?? folder.name ?? '').trim() || null,
       color: folderColors[folder.id] === undefined ? folder.color : folderColors[folder.id],
-    }));
+    }), folder.id);
   }
 
   if (!token) return null;
@@ -216,6 +254,11 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
         <Atom.ThemedText type="small" themeColor="textSecondary">
           Open a community or organize your list. Changes sync with Orbis on the web.
         </Atom.ThemedText>
+        {readOnly ? (
+          <Atom.ThemedText type="small" themeColor="textSecondary">
+            Confirm your email first to organize your communities.
+          </Atom.ThemedText>
+        ) : null}
       </View>
 
       {currentError ? (
@@ -224,7 +267,10 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
           <Atom.Button
             label="Retry"
             variant="secondary"
-            onPress={() => setAttempt((value) => value + 1)}
+            onPress={() => {
+              setLoaded(null);
+              setReload((value) => value + 1);
+            }}
           />
         </View>
       ) : !current ? (
@@ -249,6 +295,7 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
                   key={`community-${community.id}`}
                   community={community}
                   selected={selectedIds.includes(community.id)}
+                  disabled={readOnly}
                   onSelect={() => toggleSelected(community.id)}
                   onMoveUp={() => moveEntry(index, -1)}
                   onMoveDown={() => moveEntry(index, 1)}
@@ -273,6 +320,7 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
                     accessibilityLabel={`Name for ${item.name || 'folder'}`}
                     maxLength={32}
                     placeholder="Folder"
+                    editable={!readOnly}
                     value={folderNames[item.id] ?? item.name ?? ''}
                     onChangeText={(name) =>
                       setFolderNames((values) => ({ ...values, [item.id]: name }))
@@ -282,15 +330,19 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Move ${item.name || 'folder'} up`}
+                    accessibilityState={{ disabled: readOnly }}
+                    disabled={readOnly}
                     onPress={() => moveEntry(index, -1)}
-                    style={[styles.action, { borderColor: theme.divider }]}>
+                    style={[styles.action, { borderColor: theme.divider }, readOnly && styles.disabled]}>
                     <Atom.ThemedText type="small">Up</Atom.ThemedText>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Move ${item.name || 'folder'} down`}
+                    accessibilityState={{ disabled: readOnly }}
+                    disabled={readOnly}
                     onPress={() => moveEntry(index, 1)}
-                    style={[styles.action, { borderColor: theme.divider }]}>
+                    style={[styles.action, { borderColor: theme.divider }, readOnly && styles.disabled]}>
                     <Atom.ThemedText type="small">Down</Atom.ThemedText>
                   </Pressable>
                 </View>
@@ -298,28 +350,32 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="No folder color"
-                    accessibilityState={{ selected: selectedFolderColor === null }}
+                    accessibilityState={{ selected: selectedFolderColor === null, disabled: readOnly }}
+                    disabled={readOnly}
                     onPress={() => setFolderColors((values) => ({ ...values, [item.id]: null }))}
                     style={[
                       styles.colorOption,
                       { borderColor: theme.divider, backgroundColor: theme.background },
+                      readOnly && styles.disabled,
                     ]}>
                     <Atom.ThemedText type="small">None</Atom.ThemedText>
                   </Pressable>
-                  {COMMUNITY_FOLDER_COLORS.map((option) => {
-                    const selected = selectedFolderColor === option.value;
+                  {COMMUNITY_FOLDER_COLORS.map(({ value: color, label }) => {
+                    const selected = selectedFolderColor === color;
                     return (
                       <Pressable
-                        key={option.value}
+                        key={color}
                         accessibilityRole="button"
-                        accessibilityLabel={`${option.label} folder color`}
-                        accessibilityState={{ selected }}
+                        accessibilityLabel={`${label} folder color`}
+                        accessibilityState={{ selected, disabled: readOnly }}
+                        disabled={readOnly}
                         onPress={() =>
-                          setFolderColors((values) => ({ ...values, [item.id]: option.value }))
+                          setFolderColors((values) => ({ ...values, [item.id]: color }))
                         }
                         style={[
                           styles.colorDot,
-                          { backgroundColor: option.value, borderColor: selected ? theme.text : 'transparent' },
+                          { backgroundColor: color, borderColor: selected ? theme.text : 'transparent' },
+                          readOnly && styles.disabled,
                         ]}
                       />
                     );
@@ -329,13 +385,13 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
                   <Atom.Button
                     label="Save folder"
                     variant="secondary"
-                    disabled={saving}
+                    disabled={locked}
                     onPress={() => saveFolder(item)}
                   />
                   <Atom.Button
                     label="Ungroup"
                     variant="secondary"
-                    disabled={saving}
+                    disabled={locked}
                     onPress={() => void saveLayout(ungroupCommunityFolder(current.layout, item.id))}
                   />
                 </View>
@@ -347,6 +403,7 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
                       key={`community-${community.id}`}
                       community={community}
                       selected={selectedIds.includes(community.id)}
+                      disabled={readOnly}
                       onSelect={() => toggleSelected(community.id)}
                       onMoveUp={() => moveChild(item.id, community.id, -1)}
                       onMoveDown={() => moveChild(item.id, community.id, 1)}
@@ -357,7 +414,7 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
             );
           })}
 
-          {selectedIds.length > 0 ? (
+          {selectedIds.length > 0 && !readOnly ? (
             <View style={styles.folderCreator}>
               <Atom.ThemedText type="small">
                 Select at least two communities to create a folder ({selectedIds.length} selected).
@@ -372,7 +429,7 @@ export function CommunitySwitcher({ refreshKey = 0 }: { refreshKey?: number }) {
               <Atom.Button
                 label="Create folder"
                 variant="secondary"
-                disabled={selectedIds.length < 2 || saving}
+                disabled={selectedIds.length < 2 || locked}
                 onPress={makeFolder}
               />
             </View>
@@ -476,6 +533,9 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     borderWidth: 2,
+  },
+  disabled: {
+    opacity: 0.5,
   },
   folderCreator: {
     borderWidth: 1,

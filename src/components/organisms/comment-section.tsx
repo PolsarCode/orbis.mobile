@@ -13,12 +13,15 @@ import {
   type Comment,
   type Commentable,
 } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { findTextUrl } from '@/lib/rich-content';
 import { sessionFingerprint } from '@/lib/session';
 import { useAuthStore } from '@/stores/auth-store';
 import { PostComposer } from './post-composer';
 
 type CommentNode = Comment & { replies: CommentNode[] };
+
+const commentMaxLength = 10_000;
 
 function buildTree(comments: Comment[]): CommentNode[] {
   const nodes = new Map(comments.map((comment) => [comment.id, { ...comment, replies: [] as CommentNode[] }]));
@@ -73,20 +76,24 @@ function CommentItem({
 }) {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
+  const readOnly = useReadOnly();
   const [replying, setReplying] = useState(false);
   const [likePending, setLikePending] = useState(false);
   const [likeError, setLikeError] = useState<string | null>(null);
+  const [likeHint, setLikeHint] = useState(false);
   const name = node.author.name || node.author.username;
-  const hiddenLabel = node.deleted
-    ? 'This comment was deleted.'
-    : node.hidden === 'reported'
-      ? 'You reported this comment.'
-      : node.hidden === 'review'
-        ? 'This comment is hidden while admins review it.'
-        : null;
+  const hiddenLabel = node.hidden === 'reported'
+    ? 'You reported this comment.'
+    : node.hidden === 'review'
+      ? 'This comment is hidden while admins review it.'
+      : null;
   const previewUrl = node.linkUrl ?? findTextUrl(node.content);
 
   async function toggleLike() {
+    if (readOnly) {
+      setLikeHint(true);
+      return;
+    }
     if (!token || likePending) return;
     const liked = !node.liked;
     setLikePending(true);
@@ -98,6 +105,31 @@ function CommentItem({
     } finally {
       setLikePending(false);
     }
+  }
+
+  const replies = node.replies.length ? (
+    <View style={[styles.replies, { borderLeftColor: theme.divider }]}>
+      {node.replies.map((reply) => (
+        <CommentItem
+          key={reply.id}
+          node={reply}
+          canReply={canReply}
+          onReply={onReply}
+          onLike={onLike}
+        />
+      ))}
+    </View>
+  ) : null;
+
+  if (node.deleted) {
+    return (
+      <View style={styles.comment}>
+        <Atom.ThemedText type="small" themeColor="textSecondary" style={styles.deleted}>
+          Comment deleted
+        </Atom.ThemedText>
+        {replies}
+      </View>
+    );
   }
 
   return (
@@ -134,10 +166,14 @@ function CommentItem({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={node.liked ? 'Unlike comment' : 'Like comment'}
-          accessibilityState={{ disabled: !token || likePending, busy: likePending }}
+          accessibilityHint={readOnly ? 'Confirm your email first to like this.' : undefined}
+          accessibilityState={{ disabled: !token || readOnly || likePending, busy: likePending }}
           disabled={!token || likePending}
           onPress={() => void toggleLike()}
-          style={({ pressed }) => [styles.action, { opacity: pressed || likePending ? 0.65 : 1 }]}>
+          style={({ pressed }) => [
+            styles.action,
+            { opacity: readOnly ? 0.5 : pressed || likePending ? 0.65 : 1 },
+          ]}>
           <Atom.ThemedText
             type="smallBold"
             style={{ color: node.liked ? theme.accent : theme.textSecondary }}>
@@ -156,28 +192,25 @@ function CommentItem({
           </Pressable>
         ) : null}
       </View>
+      {readOnly && likeHint ? (
+        <Atom.ThemedText type="small" themeColor="textSecondary">
+          Confirm your email first to like this.
+        </Atom.ThemedText>
+      ) : null}
       {likeError ? <Atom.ErrorMessage>{likeError}</Atom.ErrorMessage> : null}
       {replying ? (
         <PostComposer
           target={`Replying to @${node.author.username}`}
           placeholder="Write a reply…"
           submitLabel="Reply"
-          onPost={(content, linkUrl) => onReply(content, node.id, linkUrl)}
+          maxLength={commentMaxLength}
+          onPost={async (content, linkUrl) => {
+            await onReply(content, node.id, linkUrl);
+            setReplying(false);
+          }}
         />
       ) : null}
-      {node.replies.length ? (
-        <View style={[styles.replies, { borderLeftColor: theme.divider }]}>
-          {node.replies.map((reply) => (
-            <CommentItem
-              key={reply.id}
-              node={reply}
-              canReply={canReply}
-              onReply={onReply}
-              onLike={onLike}
-            />
-          ))}
-        </View>
-      ) : null}
+      {replies}
     </View>
   );
 }
@@ -276,6 +309,7 @@ export function CommentSection({
         <PostComposer
           placeholder="Write a comment…"
           submitLabel="Comment"
+          maxLength={commentMaxLength}
           onPost={(content, linkUrl) => reply(content, undefined, linkUrl)}
         />
       ) : (
@@ -296,9 +330,9 @@ export function CommentSection({
         <View style={styles.loading}>
           <Atom.ThemedText type="small" themeColor="textSecondary">Loading comments…</Atom.ThemedText>
         </View>
-      ) : visibleComments?.length ? (
+      ) : comments.length ? (
         <View style={styles.commentList}>
-          {buildTree(visibleComments).map((comment) => (
+          {buildTree(comments).map((comment) => (
             <CommentItem
               key={comment.id}
               node={comment}
@@ -365,6 +399,9 @@ const styles = StyleSheet.create({
   action: {
     minHeight: 36,
     justifyContent: 'center',
+  },
+  deleted: {
+    fontStyle: 'italic',
   },
   replies: {
     marginLeft: Spacing.two,

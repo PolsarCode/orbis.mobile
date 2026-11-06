@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { normalizeWebUrl } from '@/lib/rich-content';
 import { searchPeople, type FriendUser } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { sessionFingerprint } from '@/lib/session';
 import { useAuthStore } from '@/stores/auth-store';
 import * as Molecule from '@molecule';
@@ -136,15 +137,28 @@ export function PostComposer({
   placeholder = 'Write something…',
   submitLabel = 'Post',
   target,
+  maxLength = 20_000,
 }: {
   onPost: (content: string, linkUrl?: string) => Promise<void>;
   placeholder?: string;
   submitLabel?: string;
   target?: string;
+  maxLength?: number;
 }) {
+  const theme = useTheme();
   const token = useAuthStore((state) => state.token);
   const userId = useAuthStore((state) => state.profile?.userId ?? null);
+  const readOnly = useReadOnly();
   const sessionKey = `${userId ?? 'unknown'}-${sessionFingerprint(token)}`;
+  if (readOnly) {
+    return (
+      <View style={[styles.readOnly, { borderColor: theme.divider, backgroundColor: theme.surface }]}>
+        <Atom.ThemedText type="small" themeColor="textSecondary">
+          Confirm your email to post, comment, and react. Until then, you can read everything.
+        </Atom.ThemedText>
+      </View>
+    );
+  }
   return (
     <PostComposerForm
       key={sessionKey}
@@ -153,6 +167,7 @@ export function PostComposer({
       placeholder={placeholder}
       submitLabel={submitLabel}
       target={target}
+      maxLength={maxLength}
     />
   );
 }
@@ -163,12 +178,14 @@ function PostComposerForm({
   placeholder = 'Write something…',
   submitLabel = 'Post',
   target,
+  maxLength,
 }: {
   token: string | null;
   onPost: (content: string, linkUrl?: string) => Promise<void>;
   placeholder?: string;
   submitLabel?: string;
   target?: string;
+  maxLength: number;
 }) {
   const theme = useTheme();
   const postingRef = useRef(false);
@@ -296,7 +313,7 @@ function PostComposerForm({
       setError('Write something or add a link before posting.');
       return;
     }
-    if (html.length > 20_000) {
+    if (html.length > maxLength) {
       setError('Formatted content is too long. Shorten it before posting.');
       return;
     }
@@ -330,7 +347,7 @@ function PostComposerForm({
       <TextInput
         accessibilityLabel={placeholder}
         multiline
-        maxLength={20_000}
+        maxLength={maxLength}
         placeholder={placeholder}
         placeholderTextColor={theme.textSecondary}
         textAlignVertical="top"
@@ -391,7 +408,7 @@ function PostComposerForm({
       {linkUrl.trim() ? <Molecule.LinkPreview url={linkUrl.trim()} /> : null}
       {error ? <Atom.ErrorMessage>{error}</Atom.ErrorMessage> : null}
       <View style={styles.footer}>
-        <Atom.ThemedText type="small" themeColor="textSecondary">{content.length}/20,000</Atom.ThemedText>
+        <Atom.ThemedText type="small" themeColor="textSecondary">{content.length}/{maxLength.toLocaleString('en-US')}</Atom.ThemedText>
         <Atom.Button
           label={posting ? 'Posting…' : submitLabel}
           loading={posting}
@@ -407,6 +424,12 @@ const styles = StyleSheet.create({
   container: {
     gap: Spacing.two,
     borderWidth: 1,
+    borderRadius: 12,
+    padding: Spacing.three,
+  },
+  readOnly: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: 'dashed',
     borderRadius: 12,
     padding: Spacing.three,
   },

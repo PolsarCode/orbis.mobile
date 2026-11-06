@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Platform,
   Pressable,
   Share,
@@ -11,6 +12,7 @@ import * as Sharing from 'expo-sharing';
 import * as Atom from '@atom';
 
 import { Spacing } from '@/constants/theme';
+import { useCurrentProfile } from '@/hooks/use-current-profile';
 import { useTheme } from '@/hooks/use-theme';
 import {
   WEB_URL,
@@ -22,6 +24,7 @@ import {
   setInviteEnabled,
   type Invite,
 } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 
 const MAX_AGES = [
@@ -55,6 +58,22 @@ function inviteUrl(code: string) {
   return `${WEB_URL}/invite/${encodeURIComponent(code)}`;
 }
 
+function askForConfirmation(
+  title: string,
+  message: string,
+  action: string,
+  onConfirm: () => void,
+) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: action, style: 'destructive', onPress: onConfirm },
+  ]);
+}
+
 function fileName(value: string) {
   return `${value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'community'}-invite-card.pdf`;
 }
@@ -75,11 +94,14 @@ export function CommunityInvites({
 }) {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
+  useCurrentProfile();
+  const readOnly = useReadOnly();
   const id = Number(communityId);
   const [loaded, setLoaded] = useState<LoadedInvites | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
   const [sharingCard, setSharingCard] = useState(false);
   const [maxAgeIndex, setMaxAgeIndex] = useState(4);
   const [maxUsesIndex, setMaxUsesIndex] = useState(0);
@@ -123,7 +145,7 @@ export function CommunityInvites({
   ) ?? [];
 
   async function handleCreateInvite() {
-    if (!token || creating) return;
+    if (!token || creating || readOnly) return;
     setError(null);
     setCreating(true);
     try {
@@ -145,7 +167,7 @@ export function CommunityInvites({
   }
 
   async function handleCreatePermanent() {
-    if (!token || updating) return;
+    if (!token || updating || readOnly) return;
     setError(null);
     setUpdating(true);
     try {
@@ -164,7 +186,7 @@ export function CommunityInvites({
   }
 
   async function handleTogglePermanent() {
-    if (!token || !permanentInvite || updating) return;
+    if (!token || !permanentInvite || updating || readOnly) return;
     setError(null);
     setUpdating(true);
     try {
@@ -182,9 +204,20 @@ export function CommunityInvites({
     }
   }
 
+  function confirmRevoke(invite: Invite) {
+    if (!token || revoking || readOnly) return;
+    askForConfirmation(
+      `Revoke invite ${invite.code}?`,
+      'Anyone who has this link won’t be able to use it to join.',
+      'Revoke',
+      () => void handleRevoke(invite),
+    );
+  }
+
   async function handleRevoke(invite: Invite) {
     if (!token) return;
     setError(null);
+    setRevoking(invite.code);
     try {
       await revokeInvite(token, id, invite.code);
       setLoaded((previous) => previous?.key === key && previous.invites
@@ -192,17 +225,20 @@ export function CommunityInvites({
         : previous);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not revoke the invite.');
+    } finally {
+      setRevoking(null);
     }
   }
 
   async function shareLink(code: string) {
     setError(null);
+    const link = inviteUrl(code);
     try {
-      await Share.share({
-        title: 'Community invite',
-        message: inviteUrl(code),
-        url: inviteUrl(code),
-      });
+      await Share.share(
+        Platform.OS === 'android'
+          ? { title: 'Community invite', message: link }
+          : { title: 'Community invite', url: link },
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not share the invite link.');
     }
@@ -284,7 +320,17 @@ export function CommunityInvites({
             <Atom.ThemedText type="small">Uses: {MAX_USES[maxUsesIndex].label}</Atom.ThemedText>
           </Pressable>
         </View>
-        <Atom.Button label="Generate invite link" loading={creating} onPress={handleCreateInvite} />
+        <Atom.Button
+          label="Generate invite link"
+          loading={creating}
+          disabled={readOnly}
+          onPress={handleCreateInvite}
+        />
+        {readOnly ? (
+          <Atom.ThemedText type="small" themeColor="textSecondary">
+            Confirm your email first to create or revoke invite links.
+          </Atom.ThemedText>
+        ) : null}
         {activeInvites.length ? (
           <View style={styles.list}>
             <Atom.ThemedText type="smallBold">Active invites · {activeInvites.length}</Atom.ThemedText>
@@ -299,7 +345,14 @@ export function CommunityInvites({
                 </View>
                 <View style={styles.rowActions}>
                   <Atom.Button label="Share" variant="secondary" onPress={() => shareLink(invite.code)} />
-                  <Atom.Button label="Revoke" variant="secondary" onPress={() => handleRevoke(invite)} />
+                  <Atom.Button
+                    label="Revoke"
+                    accessibilityLabel={`Revoke invite ${invite.code}`}
+                    variant="secondary"
+                    loading={revoking === invite.code}
+                    disabled={readOnly || (revoking !== null && revoking !== invite.code)}
+                    onPress={() => confirmRevoke(invite)}
+                  />
                 </View>
               </View>
             ))}
@@ -326,6 +379,7 @@ export function CommunityInvites({
                 label={permanentEnabled ? 'Turn off' : 'Turn on'}
                 variant="secondary"
                 loading={updating}
+                disabled={readOnly}
                 onPress={handleTogglePermanent}
               />
               <Atom.Button
@@ -343,8 +397,18 @@ export function CommunityInvites({
             </View>
           </>
         ) : (
-          <Atom.Button label="Create permanent invite" loading={updating} onPress={handleCreatePermanent} />
+          <Atom.Button
+            label="Create permanent invite"
+            loading={updating}
+            disabled={readOnly}
+            onPress={handleCreatePermanent}
+          />
         )}
+        {readOnly ? (
+          <Atom.ThemedText type="small" themeColor="textSecondary">
+            Confirm your email first to change the permanent invite.
+          </Atom.ThemedText>
+        ) : null}
       </View>
 
       {error ? <Atom.ErrorMessage>{error}</Atom.ErrorMessage> : null}

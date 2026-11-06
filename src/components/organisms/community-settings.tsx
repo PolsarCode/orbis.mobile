@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import * as Atom from '@atom';
 
 import { Spacing } from '@/constants/theme';
+import { useCurrentProfile } from '@/hooks/use-current-profile';
 import { useTheme } from '@/hooks/use-theme';
 import {
   deleteCommunity,
@@ -23,6 +24,7 @@ import {
   normalizeCommunityLink,
   normalizeCommunityLinks,
 } from '@/lib/community-links';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 
 const imageFields: { key: CommunityImage; label: string; ratio?: [number, number] }[] = [
@@ -58,6 +60,14 @@ function askForConfirmation(
   ]);
 }
 
+function ReadOnlyHint({ action }: { action: string }) {
+  return (
+    <Atom.ThemedText type="small" themeColor="textSecondary">
+      Confirm your email first to {action}.
+    </Atom.ThemedText>
+  );
+}
+
 function Section({
   title,
   description,
@@ -90,6 +100,8 @@ export function CommunitySettings({
 }) {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
+  useCurrentProfile();
+  const readOnly = useReadOnly();
   const [community, setCommunity] = useState(initialCommunity);
   const [name, setName] = useState(initialCommunity.name);
   const [description, setDescription] = useState(initialCommunity.description ?? '');
@@ -147,12 +159,13 @@ export function CommunitySettings({
   }, [community.id, membersKey, token]);
 
   async function saveGeneral() {
-    if (!token || pendingSection) return;
+    if (!token || pendingSection || readOnly) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError('Enter a community name.');
       return;
     }
+    const keepLinkDrafts = linksChanged;
     setPendingSection('general');
     setError(null);
     setMessage(null);
@@ -166,6 +179,8 @@ export function CommunitySettings({
       setName(updated.name);
       setDescription(updated.description ?? '');
       setIsPublic(updated.isPublic !== false);
+      setSavedLinks(updated.links ?? {});
+      if (!keepLinkDrafts) setLinks(updated.links ?? {});
       setMessage('Settings saved.');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save the settings.');
@@ -175,7 +190,7 @@ export function CommunitySettings({
   }
 
   async function saveLinks() {
-    if (!token || pendingSection || invalidLink) return;
+    if (!token || pendingSection || invalidLink || readOnly) return;
     setPendingSection('links');
     setError(null);
     setMessage(null);
@@ -194,7 +209,7 @@ export function CommunitySettings({
   }
 
   async function pickImage(image: CommunityImage, ratio?: [number, number]) {
-    if (!token || pendingImage) return;
+    if (!token || pendingImage || readOnly) return;
     setError(null);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -230,7 +245,7 @@ export function CommunitySettings({
   }
 
   async function removeImage(image: CommunityImage) {
-    if (!token || pendingImage) return;
+    if (!token || pendingImage || readOnly) return;
     setPendingImage(image);
     setError(null);
     setMessage(null);
@@ -255,7 +270,7 @@ export function CommunitySettings({
   }
 
   function confirmAdminChange(member: CommunityMember, promote: boolean) {
-    if (!isOwner || member.isOwner || !token || pendingMember !== null) return;
+    if (!isOwner || member.isOwner || !token || pendingMember !== null || readOnly) return;
     const label = member.name || member.username;
     askForConfirmation(
       promote ? `Make ${label} an admin?` : `Remove ${label} as an admin?`,
@@ -288,7 +303,7 @@ export function CommunitySettings({
   }
 
   function confirmDelete() {
-    if (!isOwner || !token || pendingSection) return;
+    if (!isOwner || !token || pendingSection || readOnly) return;
     askForConfirmation(
       `Delete ${community.name}?`,
       'This permanently deletes the community, its posts, and member access. This cannot be undone.',
@@ -376,9 +391,10 @@ export function CommunitySettings({
         <Atom.Button
           label="Save changes"
           loading={pendingSection === 'general'}
-          disabled={!generalChanged || Boolean(pendingSection)}
+          disabled={readOnly || !generalChanged || Boolean(pendingSection)}
           onPress={() => void saveGeneral()}
         />
+        {readOnly ? <ReadOnlyHint action="change this" /> : null}
       </Section>
 
       <Section title="Images" description="Images are shared with Orbis on the web. Maximum size: 10 MB.">
@@ -399,27 +415,32 @@ export function CommunitySettings({
               )}
               <View style={styles.imageInfo}>
                 <Atom.ThemedText type="smallBold">{label}</Atom.ThemedText>
-                <Atom.Button
-                  label="Choose image"
-                  accessibilityLabel={`Choose community ${label.toLowerCase()}`}
-                  variant="secondary"
-                  loading={pendingImage === key}
-                  disabled={Boolean(pendingImage)}
-                  onPress={() => void pickImage(key, ratio)}
-                />
-                {uri ? (
-                  <Atom.Button
-                    label="Remove"
-                    accessibilityLabel={`Remove community ${label.toLowerCase()}`}
-                    variant="secondary"
-                    disabled={Boolean(pendingImage)}
-                    onPress={() => confirmRemoveImage(key, label)}
-                  />
-                ) : null}
+                {readOnly ? null : (
+                  <>
+                    <Atom.Button
+                      label="Choose image"
+                      accessibilityLabel={`Choose community ${label.toLowerCase()}`}
+                      variant="secondary"
+                      loading={pendingImage === key}
+                      disabled={Boolean(pendingImage)}
+                      onPress={() => void pickImage(key, ratio)}
+                    />
+                    {uri ? (
+                      <Atom.Button
+                        label="Remove"
+                        accessibilityLabel={`Remove community ${label.toLowerCase()}`}
+                        variant="secondary"
+                        disabled={Boolean(pendingImage)}
+                        onPress={() => confirmRemoveImage(key, label)}
+                      />
+                    ) : null}
+                  </>
+                )}
               </View>
             </View>
           );
         })}
+        {readOnly ? <ReadOnlyHint action="change images" /> : null}
       </Section>
 
       <Section title="External links" description="Add the community’s other places.">
@@ -453,9 +474,10 @@ export function CommunitySettings({
           label="Save links"
           variant="secondary"
           loading={pendingSection === 'links'}
-          disabled={!linksChanged || Boolean(invalidLink) || Boolean(pendingSection)}
+          disabled={readOnly || !linksChanged || Boolean(invalidLink) || Boolean(pendingSection)}
           onPress={() => void saveLinks()}
         />
+        {readOnly ? <ReadOnlyHint action="change this" /> : null}
       </Section>
 
       <Section
@@ -498,7 +520,7 @@ export function CommunitySettings({
                     label={isAdmin ? 'Remove admin' : 'Make admin'}
                     variant="secondary"
                     loading={pendingMember === member.userId}
-                    disabled={pendingMember !== null}
+                    disabled={readOnly || pendingMember !== null}
                     onPress={() => confirmAdminChange(member, !member.isAdmin)}
                   />
                 ) : null}
@@ -506,6 +528,7 @@ export function CommunitySettings({
             );
           })
         )}
+        {readOnly && isOwner ? <ReadOnlyHint action="change admins" /> : null}
       </Section>
 
       {isOwner ? (
@@ -516,9 +539,10 @@ export function CommunitySettings({
             label="Delete community"
             variant="secondary"
             loading={pendingSection === 'delete'}
-            disabled={Boolean(pendingSection)}
+            disabled={readOnly || Boolean(pendingSection)}
             onPress={confirmDelete}
           />
+          {readOnly ? <ReadOnlyHint action="delete this community" /> : null}
         </Section>
       ) : null}
 

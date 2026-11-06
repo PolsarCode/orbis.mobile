@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 
 import * as api from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
+import { useMessagesStore } from '@/stores/messages-store';
 
 import { MemberProfile } from '../member-profile';
 
@@ -75,7 +76,7 @@ function publicProfile(overrides: Partial<api.PublicProfile> = {}): api.PublicPr
   };
 }
 
-function signInAs(userId: number) {
+function signInAs(userId: number, emailVerifiedAt: string | null = '2026-10-01T00:00:00.000Z') {
   useAuthStore.setState({
     token: 'token',
     sessionExpired: false,
@@ -94,7 +95,7 @@ function signInAs(userId: number) {
       showChangelog: true,
       isAdmin: false,
       isHeadAdmin: false,
-      emailVerifiedAt: '2026-10-01T00:00:00.000Z',
+      emailVerifiedAt,
       createdAt: '2026-10-01T00:00:00.000Z',
     },
   });
@@ -230,6 +231,55 @@ describe('member profiles', () => {
     await fireEvent.press(await screen.findByText('Rasengan clutch'));
 
     expect(openBrowser).toHaveBeenCalledWith('https://clips.twitch.tv/rasengan');
+  });
+
+  it('asks unconfirmed members to confirm their email before messaging or posting', async () => {
+    signInAs(1, null);
+    getPublicProfile.mockResolvedValue(publicProfile());
+
+    await openProfile();
+
+    expect(await screen.findByText('Confirm your email first to send messages.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Message', disabled: true })).toBeTruthy();
+    expect(await screen.findByText('Confirm your email to start posting.')).toBeTruthy();
+    expect(screen.queryByLabelText('Write on Naruto Uzumaki’s wall…')).toBeNull();
+  });
+
+  it('lets unconfirmed members open a chat that already exists', async () => {
+    signInAs(1, null);
+    useMessagesStore.setState({
+      conversations: [{
+        id: 8,
+        isGroup: false,
+        name: null,
+        creatorId: null,
+        members: [{ userId: 2, username: 'naruto', name: 'Naruto Uzumaki', avatarUrl: null }],
+        lastText: 'Hi',
+        lastSenderId: 2,
+        lastSystem: false,
+        lastAt: '2026-11-07T00:00:00.000Z',
+        unread: 0,
+        status: 'accepted',
+      }],
+    });
+    getPublicProfile.mockResolvedValue(publicProfile());
+
+    await openProfile();
+
+    expect(await screen.findByRole('button', { name: 'Message', disabled: false })).toBeTruthy();
+    expect(screen.queryByText('Confirm your email first to send messages.')).toBeNull();
+    expect(await screen.findByText('Confirm your email to start posting.')).toBeTruthy();
+  });
+
+  it('hides the image controls on your own profile until the email is confirmed', async () => {
+    signInAs(2, null);
+    getPublicProfile.mockResolvedValue(publicProfile({ avatarUrl: 'https://example.com/a.png' }));
+
+    await openProfile();
+
+    expect(await screen.findByText('Confirm your email first to change images.')).toBeTruthy();
+    expect(screen.queryByText('Change profile picture')).toBeNull();
+    expect(screen.queryByLabelText('Remove profile picture')).toBeNull();
   });
 
   it('keeps another member’s profile free of owner controls', async () => {

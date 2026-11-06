@@ -19,6 +19,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { FeedCard } from '@/components/organisms/feed-card';
 import { presenceLabel, presenceStatus } from '@/lib/presence';
+import { useReadOnly } from '@/lib/read-only';
 import {
   createWallPost,
   getPublicProfile,
@@ -36,7 +37,8 @@ import {
 } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 import { useFriendsStore } from '@/stores/friends-store';
-import { useMessagesStore } from '@/stores/messages-store';
+import { directConversationWith, useMessagesStore } from '@/stores/messages-store';
+import { EmailConfirmNotice } from './email-confirm-notice';
 import { PostComposer } from './post-composer';
 
 const profileTabs = [
@@ -99,6 +101,7 @@ export function MemberProfile({ username: initialUsername }: { username?: string
   const username = initialUsername ?? params.username ?? '';
   const token = useAuthStore((state) => state.token);
   const signedInProfile = useAuthStore((state) => state.profile);
+  const readOnly = useReadOnly();
   const preferencesPending = useAuthStore((state) => state.preferencesPending);
   const preferencesVersion = useAuthStore((state) => state.preferencesVersion);
   const logout = useAuthStore((state) => state.logout);
@@ -133,6 +136,9 @@ export function MemberProfile({ username: initialUsername }: { username?: string
     ? loaded
     : null;
   const profile = currentLoaded?.profile ?? null;
+  const chatLocked = useMessagesStore((state) =>
+    readOnly && !(profile && directConversationWith(state.conversations, profile.userId)),
+  );
   const activeTab =
     isProfileTab(requestedTab) &&
     (requestedTab !== 'clips' || profile?.hasClips !== false)
@@ -511,8 +517,14 @@ export function MemberProfile({ username: initialUsername }: { username?: string
             <Atom.Button
               label={openingChat ? 'Opening chat…' : 'Message'}
               loading={openingChat}
+              disabled={chatLocked}
               onPress={() => void openChat()}
             />
+            {chatLocked ? (
+              <Atom.ThemedText type="small" themeColor="textSecondary">
+                Confirm your email first to send messages.
+              </Atom.ThemedText>
+            ) : null}
             {chatError ? <Atom.ErrorMessage>{chatError}</Atom.ErrorMessage> : null}
           </View>
         ) : null}
@@ -520,28 +532,34 @@ export function MemberProfile({ username: initialUsername }: { username?: string
         {isSelf ? (
           <View style={styles.imageControls}>
             <Atom.ThemedText type="smallBold">Profile images</Atom.ThemedText>
-            <View style={styles.imageButtons}>
-              {imageChoices.map((choice) => (
-                <View key={choice.type} style={styles.imageButton}>
-                  <Atom.Button
-                    label={pendingImage === choice.type ? 'Saving…' : `Change ${choice.label.toLowerCase()}`}
-                    variant="secondary"
-                    disabled={pendingImage !== null}
-                    onPress={() => pickImage(choice.type, choice.aspect)}
-                  />
-                  {choice.url ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remove ${choice.label.toLowerCase()}`}
+            {readOnly ? (
+              <Atom.ThemedText type="small" themeColor="textSecondary">
+                Confirm your email first to change images.
+              </Atom.ThemedText>
+            ) : (
+              <View style={styles.imageButtons}>
+                {imageChoices.map((choice) => (
+                  <View key={choice.type} style={styles.imageButton}>
+                    <Atom.Button
+                      label={pendingImage === choice.type ? 'Saving…' : `Change ${choice.label.toLowerCase()}`}
+                      variant="secondary"
                       disabled={pendingImage !== null}
-                      onPress={() => confirmRemoveImage(choice.type, choice.label)}
-                      style={styles.removeButton}>
-                      <Atom.ThemedText type="small" style={{ color: theme.accent }}>Remove</Atom.ThemedText>
-                    </Pressable>
-                  ) : null}
-                </View>
-              ))}
-            </View>
+                      onPress={() => pickImage(choice.type, choice.aspect)}
+                    />
+                    {choice.url ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${choice.label.toLowerCase()}`}
+                        disabled={pendingImage !== null}
+                        onPress={() => confirmRemoveImage(choice.type, choice.label)}
+                        style={styles.removeButton}>
+                        <Atom.ThemedText type="small" style={{ color: theme.accent }}>Remove</Atom.ThemedText>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            )}
             {imageError ? <Atom.ErrorMessage>{imageError}</Atom.ErrorMessage> : null}
           </View>
         ) : null}
@@ -618,7 +636,9 @@ export function MemberProfile({ username: initialUsername }: { username?: string
               <View style={styles.centered}><Atom.ThemedText themeColor="textSecondary">Loading…</Atom.ThemedText></View>
             ) : activeTab === 'posts' ? (
               <View style={styles.list}>
-                {token && signedInProfile?.emailVerifiedAt ? (
+                {token && readOnly && signedInProfile ? (
+                  <EmailConfirmNotice email={signedInProfile.email} />
+                ) : token && signedInProfile?.emailVerifiedAt ? (
                   <PostComposer
                     placeholder={`Write on ${isSelf ? 'your' : `${name}’s`} wall…`}
                     onPost={handleWallPost}

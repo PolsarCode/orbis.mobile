@@ -90,6 +90,80 @@ describe('friends store socket lifecycle', () => {
     });
   });
 
+  it('reports a failed connection and a lost connection', () => {
+    useAuthStore.setState({ token: 'session-token' });
+    useFriendsStore.getState().connect();
+
+    handlers.connect_error?.(new Error('xhr poll error'));
+    expect(useFriendsStore.getState()).toMatchObject({
+      connected: false,
+      connectionError: 'Could not connect to live presence. Check your connection and retry.',
+    });
+
+    handlers.connect?.();
+    expect(useFriendsStore.getState()).toMatchObject({ connected: true, connectionError: null });
+
+    handlers.disconnect?.('transport close');
+    expect(useFriendsStore.getState()).toMatchObject({
+      connected: false,
+      connectionError: 'The live connection was lost. Reconnecting…',
+    });
+  });
+
+  it('asks for a manual reconnect when the server closes the connection', () => {
+    useAuthStore.setState({ token: 'session-token' });
+    useFriendsStore.getState().connect();
+    handlers.connect?.();
+
+    handlers.disconnect?.('io server disconnect');
+    expect(useFriendsStore.getState().connectionError).toBe(
+      'The live connection was closed. Tap Reconnect to try again.',
+    );
+
+    useFriendsStore.getState().connect();
+    expect(ioMock).toHaveBeenCalledTimes(1);
+    expect(socket.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it('refetches the list and re-sends idle state after reconnecting', async () => {
+    useAuthStore.setState({ token: 'session-token' });
+    useFriendsStore.getState().connect();
+    handlers.connect?.();
+    await Promise.resolve();
+
+    useFriendsStore.getState().setIdle(true);
+    expect(socket.emit).toHaveBeenLastCalledWith('idle', true);
+
+    handlers.disconnect?.('transport close');
+    getFriends.mockClear();
+    jest.mocked(socket.emit).mockClear();
+    handlers.connect?.();
+    await Promise.resolve();
+
+    expect(getFriends).toHaveBeenCalledWith('session-token');
+    expect(socket.emit).toHaveBeenCalledWith('idle', true);
+    expect(useFriendsStore.getState().connectionError).toBeNull();
+  });
+
+  it('refetches the list when friendships change', async () => {
+    useAuthStore.setState({ token: 'session-token' });
+    useFriendsStore.getState().connect();
+    getFriends.mockResolvedValueOnce({
+      friends: [],
+      incoming: [{ userId: 9, username: 'hinata', name: null, avatarUrl: null }],
+      outgoing: [],
+    });
+
+    handlers['friends:changed']?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getFriends).toHaveBeenCalledTimes(1);
+    expect(useFriendsStore.getState().incoming).toEqual([
+      { userId: 9, username: 'hinata', name: null, avatarUrl: null },
+    ]);
+  });
+
   it('closes the old socket and clears relationship data when the account changes', () => {
     useAuthStore.setState({ token: 'first-token' });
     useFriendsStore.getState().connect();

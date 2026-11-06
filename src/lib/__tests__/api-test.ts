@@ -5,9 +5,11 @@ import {
   createComment,
   createCommunity,
   createMediaPost,
+  createPermanentInvite,
   createWallPost,
   declineMessageRequest,
   deleteCommunity,
+  downloadInviteCard,
   editMessage,
   getChatHistory,
   getConversations,
@@ -18,6 +20,7 @@ import {
   getComments,
   getFeed,
   getFriends,
+  getInvites,
   getLinkPreview,
   getMediaPosts,
   getMediaProfile,
@@ -30,6 +33,7 @@ import {
   markMessagesRead,
   openDirectChat,
   reactToMessage,
+  revokeInvite,
   removeCommunityImage,
   removeFriend,
   searchChatPeople,
@@ -37,6 +41,7 @@ import {
   searchPeople,
   sendMessage,
   setCommunityAdmin,
+  setInviteEnabled,
   setLike,
   setNickname,
   setProfileVerified,
@@ -136,6 +141,15 @@ describe('api requests', () => {
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer token');
   });
 
+  it('reports why the feed could not load', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(503, { message: 'Feed is resting' }))
+      .mockReturnValueOnce(respond(500, {}));
+
+    await expect(getFeed('token')).rejects.toThrow('Feed is resting.');
+    await expect(getFeed('token')).rejects.toThrow('Could not load your feed.');
+  });
+
   it('treats a hidden community as no access but reports outages', async () => {
     fetchMock.mockReturnValueOnce(respond(404, { message: 'Not Found' }));
     await expect(getCommunity('token', '5')).resolves.toBeNull();
@@ -186,6 +200,16 @@ describe('api requests', () => {
       'No one with that username is on Orbis.',
     );
     await expect(addFriend('token', { userId: 7 })).rejects.toThrow('A request already exists.');
+  });
+
+  it('passes on the server’s refusal when a block stops a friend request', async () => {
+    fetchMock.mockReturnValueOnce(
+      respond(403, { message: 'You can’t send this person a friend request' }),
+    );
+
+    await expect(addFriend('token', { userId: 7 })).rejects.toThrow(
+      'You can’t send this person a friend request.',
+    );
   });
 
   it('treats a removed friendship or request as already resolved', async () => {
@@ -445,6 +469,25 @@ describe('api requests', () => {
     });
   });
 
+  it('uses web’s comment error messages', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(400, {
+        message: ['content must be shorter than or equal to 10000 characters'],
+      }))
+      .mockReturnValueOnce(respond(403, {
+        code: 'email_unconfirmed',
+        message: 'Confirm your email first',
+      }))
+      .mockReturnValueOnce(respond(500, { message: 'Internal server error' }))
+      .mockReturnValueOnce(respond(429, { message: 'Try again in 30 seconds' }));
+    const send = () => createComment('token', { type: 'post', id: 3 }, '<p>Hi</p>', 99);
+
+    await expect(send()).rejects.toThrow(/^Write something before commenting\.$/);
+    await expect(send()).rejects.toThrow(/^Could not post the comment\. Please try again\.$/);
+    await expect(send()).rejects.toThrow(/^Could not post the comment\. Please try again\.$/);
+    await expect(send()).rejects.toThrow('Try again in 30 seconds.');
+  });
+
   it('supports comment likes using the shared likes endpoint', async () => {
     fetchMock.mockReturnValue(respond(200, { liked: true, likeCount: 1 }));
 
@@ -510,5 +553,65 @@ describe('api requests', () => {
 
     await expect(getMediaProfile(null, 'game', 'missing')).resolves.toBeNull();
     await expect(getMediaProfile(null, 'game', 'adult')).rejects.toThrow('This title is 18+');
+  });
+
+  it('lists and revokes community invites with the shared invite routes', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(200, [{ code: 'abc' }]))
+      .mockReturnValueOnce(Promise.resolve(new Response(null, { status: 204 })))
+      .mockReturnValueOnce(respond(404, { message: 'Invite not found' }))
+      .mockReturnValueOnce(respond(403, { message: 'Only admins can manage invites' }))
+      .mockReturnValueOnce(respond(400, {
+        message: 'A permanent invite can’t be deleted. Disable it instead.',
+      }))
+      .mockReturnValueOnce(respond(403, {}));
+
+    await expect(getInvites('token', 5)).resolves.toEqual([{ code: 'abc' }]);
+    await expect(revokeInvite('token', 5, 'a/b')).resolves.toBeUndefined();
+    await expect(revokeInvite('token', 5, 'gone')).resolves.toBeUndefined();
+    await expect(revokeInvite('token', 5, 'theirs')).rejects.toThrow('Only admins can manage invites.');
+    await expect(revokeInvite('token', 5, 'card')).rejects.toThrow(
+      'A permanent invite can’t be deleted. Disable it instead.',
+    );
+    await expect(getInvites('token', 5)).rejects.toThrow('Could not load invites.');
+
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/communities\/5\/invites$/);
+    expect(fetchMock.mock.calls[0][1].headers).toEqual(
+      expect.objectContaining({ Authorization: 'Bearer token' }),
+    );
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/communities\/5\/invites\/a%2Fb$/);
+    expect(fetchMock.mock.calls[1][1].method).toBe('DELETE');
+  });
+
+  it('creates, toggles, and downloads the permanent invite card', async () => {
+    fetchMock
+      .mockReturnValueOnce(respond(201, { code: 'card', permanent: true, disabledAt: null }))
+      .mockReturnValueOnce(respond(200, { code: 'card', permanent: true, disabledAt: '2026-11-01' }))
+      .mockReturnValueOnce(Promise.resolve(new Response(new Blob(['%PDF']), {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      })))
+      .mockReturnValueOnce(respond(400, { message: 'Turn the invite on to download its card' }))
+      .mockReturnValueOnce(respond(404, { message: 'Invite not found' }));
+
+    await expect(createPermanentInvite('token', 5)).resolves.toMatchObject({ code: 'card' });
+    await expect(setInviteEnabled('token', 5, 'card', false)).resolves.toMatchObject({
+      disabledAt: '2026-11-01',
+    });
+    await expect(downloadInviteCard('token', 5)).resolves.toBeInstanceOf(Blob);
+    await expect(downloadInviteCard('token', 5)).rejects.toThrow(
+      'Turn the invite on to download its card.',
+    );
+    await expect(setInviteEnabled('token', 5, 'missing', true)).rejects.toThrow('Invite not found.');
+
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/communities\/5\/invites\/permanent$/);
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/communities\/5\/invites\/card$/);
+    expect(fetchMock.mock.calls[1][1].method).toBe('PATCH');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ enabled: false });
+    expect(String(fetchMock.mock.calls[2][0])).toMatch(/\/communities\/5\/invites\/permanent\/card$/);
+    expect(fetchMock.mock.calls[2][1].headers).toEqual(
+      expect.objectContaining({ Authorization: 'Bearer token' }),
+    );
   });
 });

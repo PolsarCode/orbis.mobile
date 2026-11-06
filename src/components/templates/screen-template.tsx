@@ -1,17 +1,21 @@
-import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
+import { HeaderHeightContext } from 'expo-router/react-navigation';
+import { useContext, type ReactNode } from 'react';
+import { KeyboardAvoidingView, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Atom from '@atom';
 
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 
 export function ScreenTemplate({ children }: { children: ReactNode }) {
+  const headerHeight = useContext(HeaderHeightContext) ?? 0;
+
   return (
     <Atom.ThemedView style={styles.screen}>
       <SafeAreaView style={styles.screen}>
         <KeyboardAvoidingView
           style={styles.screen}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          behavior="padding"
+          keyboardVerticalOffset={headerHeight}>
           <ScrollView
             contentContainerStyle={styles.content}
             keyboardShouldPersistTaps="handled">

@@ -4,20 +4,24 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import * as Atom from '@atom';
 
 import { Spacing } from '@/constants/theme';
+import { useCurrentProfile } from '@/hooks/use-current-profile';
 import { useTheme } from '@/hooks/use-theme';
 import { createCommunity } from '@/lib/api';
+import { useReadOnly } from '@/lib/read-only';
 import { useAuthStore } from '@/stores/auth-store';
 
 export function CommunityCreate() {
   const theme = useTheme();
   const token = useAuthStore((state) => state.token);
+  useCurrentProfile();
+  const readOnly = useReadOnly();
   const [name, setName] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
-    if (!token || pending) return;
+    if (!token || pending || readOnly) return;
     if (!name.trim()) {
       setError('Enter a community name.');
       return;
@@ -78,9 +82,14 @@ export function CommunityCreate() {
       <Atom.Button
         label="Create community"
         loading={pending}
-        disabled={!token}
+        disabled={!token || readOnly}
         onPress={() => void submit()}
       />
+      {readOnly ? (
+        <Atom.ThemedText type="small" themeColor="textSecondary">
+          Confirm your email first to create a community.
+        </Atom.ThemedText>
+      ) : null}
       <Atom.Button
         label="Cancel"
         variant="secondary"

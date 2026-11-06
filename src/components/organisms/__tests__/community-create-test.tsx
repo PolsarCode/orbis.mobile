@@ -12,10 +12,35 @@ jest.mock('@/lib/api', () => ({
 
 const createCommunity = api.createCommunity as jest.Mock;
 
+function profile(emailVerifiedAt: string | null): api.Profile {
+  return {
+    userId: 1,
+    username: 'naruto',
+    email: 'naruto@anime.test',
+    avatarUrl: null,
+    coverUrl: null,
+    backgroundUrl: null,
+    theme: 'dark',
+    appearOffline: false,
+    status: 'online',
+    isPublic: true,
+    showNsfw: false,
+    showChangelog: true,
+    isAdmin: false,
+    isHeadAdmin: false,
+    emailVerifiedAt,
+    createdAt: '2026-10-01T00:00:00.000Z',
+  };
+}
+
 describe('community creation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    useAuthStore.setState({ token: 'token', sessionExpired: false });
+    useAuthStore.setState({
+      token: 'token',
+      profile: profile('2026-10-01T00:00:00.000Z'),
+      sessionExpired: false,
+    });
   });
 
   it('creates a private community and opens it', async () => {
@@ -43,5 +68,17 @@ describe('community creation', () => {
     await fireEvent.press(screen.getByText('Create community'));
 
     expect(await screen.findByText('You can’t create more communities.')).toBeTruthy();
+  });
+
+  it('asks unconfirmed accounts to confirm their email before creating', async () => {
+    useAuthStore.setState({ profile: profile(null) });
+    await renderRouter({ index: () => <CommunityCreate /> });
+
+    await fireEvent.changeText(screen.getByLabelText('Community name'), 'Konoha');
+    expect(screen.getByText('Confirm your email first to create a community.')).toBeTruthy();
+    expect(screen.getByText('Create community')).toBeDisabled();
+    await fireEvent(screen.getByLabelText('Community name'), 'submitEditing');
+
+    expect(createCommunity).not.toHaveBeenCalled();
   });
 });

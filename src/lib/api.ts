@@ -70,11 +70,6 @@ export type CommunityLinkPlatform =
   | 'website';
 export type CommunityLinks = Partial<Record<CommunityLinkPlatform, string>>;
 export type CommunityImage = 'icon' | 'cover' | 'background';
-export type CommunityConnectionSetting =
-  | 'showTwitchLive'
-  | 'showTwitchClips'
-  | 'showDiscordOnline'
-  | 'showDiscordInvite';
 
 export type ProfilePreferences = Partial<
   Pick<Profile, 'theme' | 'appearOffline' | 'status' | 'isPublic' | 'showNsfw' | 'showChangelog'>
@@ -93,10 +88,6 @@ export type Community = {
   isVerified?: boolean;
   memberCount?: number;
   links?: CommunityLinks;
-  showTwitchLive?: boolean;
-  showTwitchClips?: boolean;
-  showDiscordOnline?: boolean;
-  showDiscordInvite?: boolean;
   showLibraryUpdates?: boolean;
 };
 
@@ -235,7 +226,29 @@ export type Post = {
   author: Author;
   community: CommunitySummary | null;
   wallUser: Author | null;
+  quote?: QuotedItem | null;
+  repostedBy?: RepostedBy | null;
 };
+
+export type RepostedBy = { people: Author[]; total: number };
+
+export type QuotedPost = Pick<
+  Post,
+  | 'id'
+  | 'content'
+  | 'linkUrl'
+  | 'spoiler'
+  | 'createdAt'
+  | 'author'
+  | 'community'
+  | 'wallUser'
+  | 'hiddenBecause'
+> & { media: { type: MediaType; sourceId: string; title: string | null } | null };
+
+export type QuotedItem =
+  | { available: true; type: 'post'; post: QuotedPost }
+  | { available: true; type: 'activity'; activity: Activity }
+  | { available: false };
 
 export type ChatPerson = {
   userId: number;
@@ -448,6 +461,7 @@ export type Activity = {
     coverImage: string | null;
     year: number | null;
   };
+  repostedBy?: RepostedBy | null;
 };
 
 export type FeedEntry = Post | Activity;
@@ -897,16 +911,7 @@ export async function getCommunity(token: string | null, id: string): Promise<Co
 export async function updateCommunity(
   token: string,
   communityId: number,
-  changes: Partial<
-    Pick<
-      Community,
-      | 'name'
-      | 'isPublic'
-      | 'description'
-      | 'links'
-      | CommunityConnectionSetting
-    >
-  >,
+  changes: Partial<Pick<Community, 'name' | 'isPublic' | 'description' | 'links'>>,
 ): Promise<Community> {
   const res = await api(`/communities/${communityId}`, {
     method: 'PATCH',
@@ -1374,9 +1379,7 @@ export async function createComment(
     body: JSON.stringify({ ...target, content, parentId, linkUrl }),
   });
   if (res.status === 400) throw new Error('Write something before commenting.');
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, 'Could not post the comment. Please try again.'));
-  }
+  if (!res.ok) throw new Error('Could not post the comment. Please try again.');
   return res.json();
 }
 

@@ -3,7 +3,7 @@ import { StyleSheet, TextInput, type TextInputProps } from 'react-native';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-export function Input(props: TextInputProps) {
+export function Input({ style, ...props }: TextInputProps) {
   const theme = useTheme();
 
   return (
@@ -16,6 +16,7 @@ export function Input(props: TextInputProps) {
           backgroundColor: theme.backgroundElement,
           borderColor: theme.backgroundSelected,
         },
+        style,
       ]}
       {...props}
     />

@@ -23,6 +23,7 @@ jest.mock('expo-image-picker', () => ({
 
 const deleteCommunity = api.deleteCommunity as jest.Mock;
 const getCommunityMembers = api.getCommunityMembers as jest.Mock;
+const removeCommunityImage = api.removeCommunityImage as jest.Mock;
 const setCommunityAdmin = api.setCommunityAdmin as jest.Mock;
 const updateCommunity = api.updateCommunity as jest.Mock;
 const uploadCommunityImage = api.uploadCommunityImage as jest.Mock;
@@ -58,6 +59,27 @@ function member(overrides: Partial<api.CommunityMember> = {}): api.CommunityMemb
   };
 }
 
+function profile(emailVerifiedAt: string | null): api.Profile {
+  return {
+    userId: 1,
+    username: 'naruto',
+    email: 'naruto@anime.test',
+    avatarUrl: null,
+    coverUrl: null,
+    backgroundUrl: null,
+    theme: 'dark',
+    appearOffline: false,
+    status: 'online',
+    isPublic: true,
+    showNsfw: false,
+    showChangelog: true,
+    isAdmin: false,
+    isHeadAdmin: false,
+    emailVerifiedAt,
+    createdAt: '2026-10-01T00:00:00.000Z',
+  };
+}
+
 async function openSettings(
   community = ownerCommunity,
   onDeleted: () => void = jest.fn(),
@@ -78,7 +100,11 @@ describe('community settings', () => {
     setCommunityAdmin.mockResolvedValue([member({ isAdmin: true })]);
     deleteCommunity.mockResolvedValue(undefined);
     uploadCommunityImage.mockResolvedValue({ ...ownerCommunity, iconUrl: 'https://example.com/icon.png' });
-    useAuthStore.setState({ token: 'token', sessionExpired: false });
+    useAuthStore.setState({
+      token: 'token',
+      profile: profile('2026-10-01T00:00:00.000Z'),
+      sessionExpired: false,
+    });
   });
 
   it('saves trimmed general settings and validates social links before saving', async () => {
@@ -163,6 +189,95 @@ describe('community settings', () => {
       expect(deleteCommunity).toHaveBeenCalledWith('token', 5);
       expect(onDeleted).toHaveBeenCalled();
     });
+    alert.mockRestore();
+  });
+
+  it('picks up the links the server returns after saving general settings', async () => {
+    updateCommunity.mockImplementation(async (_token: string, _id: number, changes: object) => ({
+      ...ownerCommunity,
+      ...changes,
+      links: { website: 'https://konoha.example' },
+    }));
+    await openSettings();
+
+    await fireEvent.changeText(screen.getByLabelText('Community name'), 'Hidden Leaf');
+    await fireEvent.press(screen.getByText('Save changes'));
+
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(screen.getByLabelText('Website link').props.value).toBe('https://konoha.example');
+    expect(screen.getByText('Save links')).toBeDisabled();
+  });
+
+  it('keeps unsaved link edits when general settings are saved', async () => {
+    updateCommunity.mockImplementation(async (_token: string, _id: number, changes: object) => ({
+      ...ownerCommunity,
+      ...changes,
+      links: {},
+    }));
+    await openSettings();
+
+    await fireEvent.changeText(screen.getByLabelText('X link'), 'x.com/konoha');
+    await fireEvent.changeText(screen.getByLabelText('Community name'), 'Hidden Leaf');
+    await fireEvent.press(screen.getByText('Save changes'));
+
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(screen.getByLabelText('X link').props.value).toBe('x.com/konoha');
+    expect(screen.getByText('Save links')).toBeEnabled();
+  });
+
+  it('asks before removing a community image', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    removeCommunityImage.mockResolvedValue({ ...ownerCommunity, iconUrl: null });
+    await openSettings({ ...ownerCommunity, iconUrl: 'https://example.com/icon.png' });
+
+    await fireEvent.press(screen.getByLabelText('Remove community icon'));
+    expect(removeCommunityImage).not.toHaveBeenCalled();
+    expect(alert.mock.calls[0][0]).toBe('Remove community icon?');
+    const confirm = (alert.mock.calls[0][2] ?? []).find((button) => button.text === 'Remove')?.onPress;
+    await act(async () => confirm?.());
+
+    await waitFor(() => expect(removeCommunityImage).toHaveBeenCalledWith('token', 5, 'icon'));
+    expect(await screen.findByText('Icon removed.')).toBeTruthy();
+    expect(screen.queryByLabelText('Remove community icon')).toBeNull();
+    alert.mockRestore();
+  });
+
+  it('shows a member-list error and loads the admins again on retry', async () => {
+    getCommunityMembers
+      .mockRejectedValueOnce(new Error('Could not load community members.'))
+      .mockResolvedValueOnce([member()]);
+    await openSettings();
+
+    expect(await screen.findByText('Could not load community members.')).toBeTruthy();
+    await fireEvent.press(screen.getByText('Try again'));
+
+    expect(await screen.findByText('Sakura')).toBeTruthy();
+    expect(getCommunityMembers).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps every change disabled until the email is confirmed', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    useAuthStore.setState({ profile: profile(null) });
+    await openSettings({ ...ownerCommunity, iconUrl: 'https://example.com/icon.png' });
+    expect(await screen.findByText('Sakura')).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByLabelText('Community name'), 'Hidden Leaf');
+    await fireEvent.changeText(screen.getByLabelText('X link'), 'x.com/konoha');
+    expect(screen.getByText('Save changes')).toBeDisabled();
+    expect(screen.getByText('Save links')).toBeDisabled();
+    expect(screen.getAllByText('Confirm your email first to change this.')).toHaveLength(2);
+    expect(screen.queryByText('Choose image')).toBeNull();
+    expect(screen.queryByLabelText('Remove community icon')).toBeNull();
+    expect(screen.getByText('Confirm your email first to change images.')).toBeTruthy();
+    expect(screen.getByText('Make admin')).toBeDisabled();
+    expect(screen.getByText('Confirm your email first to change admins.')).toBeTruthy();
+    expect(screen.getByText('Delete community')).toBeDisabled();
+    expect(screen.getByText('Confirm your email first to delete this community.')).toBeTruthy();
+
+    await fireEvent.press(screen.getByText('Make admin'));
+    await fireEvent.press(screen.getByText('Delete community'));
+    expect(alert).not.toHaveBeenCalled();
+    expect(updateCommunity).not.toHaveBeenCalled();
     alert.mockRestore();
   });
 

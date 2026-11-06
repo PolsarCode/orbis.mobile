@@ -3,6 +3,7 @@ import {
   AppState,
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -568,77 +569,79 @@ export function HomeFeed() {
 
   return (
     <SafeAreaView edges={['top']} style={[styles.screen, { backgroundColor: theme.background }]}>
-      <FlatList
-        data={visibleItems ?? []}
-        keyExtractor={feedItemKey}
-        renderItem={({ item }) => (
-          <FeedCard
-            item={item}
-            onLike={handleLike}
-            onChange={handleFeedChange}
-            canComment={item.type !== 'post' || item.communityId === null || communities.some((community) => community.id === item.communityId)}
-            compact={view === 'compact'}
-          />
-        )}
-        ListHeaderComponent={header}
-        ListEmptyComponent={
-          !isFeedReady ? (
-            <View style={styles.emptyState}>
-              <ActivityIndicator color={theme.accent} />
-              <Atom.ThemedText type="small" themeColor="textSecondary">
-                Loading posts…
-              </Atom.ThemedText>
-            </View>
-          ) : visibleFeedError && !visibleItems ? (
-            <View style={styles.emptyState}>
-              <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage>
-              <Atom.Button label="Try again" variant="secondary" onPress={() => loadFeed()} />
-            </View>
-          ) : visibleItems?.length === 0 ? (
-            <View style={[styles.emptyCard, { backgroundColor: theme.surface, borderColor: theme.divider }]}>
-              <Atom.ThemedText type="smallBold">
-                {excludedTypes.length ? 'No posts match these filters.' : 'Your feed is quiet for now.'}
-              </Atom.ThemedText>
-              <Atom.ThemedText type="small" themeColor="textSecondary">
-                {excludedTypes.length
-                  ? 'Try adjusting your filters to see more of your feed.'
-                  : 'Join a community or share a post to get the conversation started.'}
-              </Atom.ThemedText>
-              {excludedTypes.length ? (
-                <Atom.Button label="Reset filters" variant="secondary" onPress={showAllTypes} />
-              ) : null}
-            </View>
-          ) : undefined
-        }
-        ListFooterComponent={
-          visibleItems?.length && visibleNextCursor ? (
-            <View style={styles.footer}>
-              {visibleFeedError ? <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage> : null}
-              <Atom.Button
-                label={loadingMore ? 'Loading…' : visibleFeedError ? 'Try loading more' : 'Load more'}
-                variant="secondary"
-                loading={loadingMore}
-                onPress={loadMore}
-              />
-            </View>
-          ) : undefined
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void refreshFeed()}
-            tintColor={theme.accent}
-            colors={[theme.accent]}
-          />
-        }
-        onEndReached={() => {
-          if (visibleNextCursor) void loadMore();
-        }}
-        onEndReachedThreshold={0.5}
-        contentContainerStyle={styles.listContent}
-        style={styles.list}
-        keyboardShouldPersistTaps="handled"
-      />
+      <KeyboardAvoidingView style={styles.screen} behavior="padding">
+        <FlatList
+          data={visibleItems ?? []}
+          keyExtractor={feedItemKey}
+          renderItem={({ item }) => (
+            <FeedCard
+              item={item}
+              onLike={handleLike}
+              onChange={handleFeedChange}
+              canComment={item.type !== 'post' || item.communityId === null || communities.some((community) => community.id === item.communityId)}
+              compact={view === 'compact'}
+            />
+          )}
+          ListHeaderComponent={header}
+          ListEmptyComponent={
+            !isFeedReady ? (
+              <View style={styles.emptyState}>
+                <ActivityIndicator color={theme.accent} />
+                <Atom.ThemedText type="small" themeColor="textSecondary">
+                  Loading posts…
+                </Atom.ThemedText>
+              </View>
+            ) : visibleFeedError && !visibleItems ? (
+              <View style={styles.emptyState}>
+                <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage>
+                <Atom.Button label="Try again" variant="secondary" onPress={() => loadFeed()} />
+              </View>
+            ) : visibleItems?.length === 0 ? (
+              <View style={[styles.emptyCard, { backgroundColor: theme.surface, borderColor: theme.divider }]}>
+                <Atom.ThemedText type="smallBold">
+                  {excludedTypes.length ? 'No posts match these filters.' : 'Your feed is quiet for now.'}
+                </Atom.ThemedText>
+                <Atom.ThemedText type="small" themeColor="textSecondary">
+                  {excludedTypes.length
+                    ? 'Try adjusting your filters to see more of your feed.'
+                    : 'Join a community or share a post to get the conversation started.'}
+                </Atom.ThemedText>
+                {excludedTypes.length ? (
+                  <Atom.Button label="Reset filters" variant="secondary" onPress={showAllTypes} />
+                ) : null}
+              </View>
+            ) : undefined
+          }
+          ListFooterComponent={
+            visibleItems?.length && visibleNextCursor ? (
+              <View style={styles.footer}>
+                {visibleFeedError ? <Atom.ErrorMessage>{visibleFeedError}</Atom.ErrorMessage> : null}
+                <Atom.Button
+                  label={loadingMore ? 'Loading…' : visibleFeedError ? 'Try loading more' : 'Load more'}
+                  variant="secondary"
+                  loading={loadingMore}
+                  onPress={loadMore}
+                />
+              </View>
+            ) : undefined
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void refreshFeed()}
+              tintColor={theme.accent}
+              colors={[theme.accent]}
+            />
+          }
+          onEndReached={() => {
+            if (visibleNextCursor) void loadMore();
+          }}
+          onEndReachedThreshold={0.5}
+          contentContainerStyle={styles.listContent}
+          style={styles.list}
+          keyboardShouldPersistTaps="handled"
+        />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
