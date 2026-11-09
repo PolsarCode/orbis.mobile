@@ -48,9 +48,12 @@ describe('friends store socket lifecycle', () => {
     useFriendsStore.getState().connect();
 
     expect(ioMock).toHaveBeenCalledWith(api.API_URL, {
-      auth: { token: 'session-token' },
+      auth: expect.any(Function),
       autoConnect: false,
     });
+    const handshake = jest.fn();
+    (ioMock.mock.calls[0][1]?.auth as (cb: (data: object) => void) => void)(handshake);
+    expect(handshake).toHaveBeenCalledWith({ token: 'session-token', platform: 'mobile', idle: false });
     expect(socket.connect).toHaveBeenCalledTimes(1);
 
     handlers.connect?.();

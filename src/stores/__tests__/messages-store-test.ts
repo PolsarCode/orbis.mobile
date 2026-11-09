@@ -89,9 +89,16 @@ describe('messages store', () => {
     useMessagesStore.getState().connect();
 
     expect(ioMock).toHaveBeenCalledWith(expect.any(String), {
-      auth: { token: 'session-token' },
+      auth: expect.any(Function),
       autoConnect: false,
     });
+    const handshake = jest.fn();
+    (ioMock.mock.calls[0][1]?.auth as (cb: (data: object) => void) => void)(handshake);
+    expect(handshake).toHaveBeenCalledWith({ token: 'session-token', platform: 'mobile', idle: false });
+    useMessagesStore.getState().setIdle(true);
+    (ioMock.mock.calls[0][1]?.auth as (cb: (data: object) => void) => void)(handshake);
+    expect(handshake).toHaveBeenLastCalledWith({ token: 'session-token', platform: 'mobile', idle: true });
+    useMessagesStore.getState().setIdle(false);
     handlers.connect?.();
     await Promise.resolve();
     await Promise.resolve();

@@ -63,7 +63,10 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
     }
 
     closeSocket();
-    const client = io(api.API_URL, { auth: { token }, autoConnect: false });
+    const client = io(api.API_URL, {
+      auth: (cb) => cb({ token, platform: 'mobile', idle }),
+      autoConnect: false,
+    });
     socket = client;
     socketToken = token;
 

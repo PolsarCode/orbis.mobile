@@ -30,6 +30,7 @@ export default function RootLayout() {
   const activityHandler = useRef<() => void>(() => {});
   const connectMessages = useMessagesStore((state) => state.connect);
   const disconnectMessages = useMessagesStore((state) => state.disconnect);
+  const setMessagesIdle = useMessagesStore((state) => state.setIdle);
 
   useEffect(() => {
     Appearance.setColorScheme(themeMode === 'system' ? 'auto' : themeMode);
@@ -54,13 +55,16 @@ export default function RootLayout() {
       if (idle === nextIdle) return;
       idle = nextIdle;
       setIdle(nextIdle);
+      setMessagesIdle(nextIdle);
     }
 
     function recordActivity() {
       const now = Date.now();
       if (!idle && now - lastActive < ACTIVITY_THROTTLE_MS) return;
       lastActive = now;
-      updateIdle(false);
+      idle = false;
+      setIdle(false);
+      setMessagesIdle(false);
       clearTimeout(timer);
       timer = setTimeout(() => updateIdle(true), IDLE_AFTER_MS);
     }
@@ -86,7 +90,7 @@ export default function RootLayout() {
       subscription.remove();
       disconnectFriends();
     };
-  }, [connectFriends, disconnectFriends, hydrated, setIdle, token]);
+  }, [connectFriends, disconnectFriends, hydrated, setIdle, setMessagesIdle, token]);
 
   useEffect(() => {
     if (!hydrated || !token) {

@@ -28,6 +28,7 @@ type MessagesState = {
   error: string | null;
   connect: () => void;
   disconnect: () => void;
+  setIdle: (idle: boolean) => void;
   refresh: () => Promise<void>;
   loadHistory: (id: number) => Promise<void>;
   loadOlder: (id: number) => Promise<void>;
@@ -65,6 +66,7 @@ const historyRequests = new Map<number, number>();
 const markingRead = new Set<string>();
 let socket: Socket | null = null;
 let socketToken: string | null = null;
+let idle = false;
 let refreshSequence = 0;
 let conversationRevision = 0;
 let nextHistoryRequest = 0;
@@ -149,7 +151,10 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     }
 
     closeSocket();
-    const client = io(api.API_URL, { auth: { token }, autoConnect: false });
+    const client = io(api.API_URL, {
+      auth: (cb) => cb({ token, platform: 'mobile', idle }),
+      autoConnect: false,
+    });
     socket = client;
     socketToken = token;
 
@@ -216,6 +221,10 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
       if (socket === client && useAuthStore.getState().token === token) get().setTyping(event);
     });
     client.connect();
+  },
+  setIdle: (nextIdle) => {
+    idle = nextIdle;
+    socket?.emit('idle', nextIdle);
   },
   disconnect: () => {
     refreshSequence += 1;
@@ -498,6 +507,7 @@ useAuthStore.subscribe((state, previous) => {
   historyRequests.clear();
   markingRead.clear();
   closeSocket();
+  idle = false;
   viewing.clear();
   typingTimers.forEach((timer) => clearTimeout(timer));
   typingTimers.clear();
