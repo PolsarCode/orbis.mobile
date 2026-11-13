@@ -1,13 +1,11 @@
 import { Link, router, useLocalSearchParams, type Href } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import * as Linking from 'expo-linking';
 import * as Atom from '@atom';
 import * as Molecule from '@molecule';
 
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { WEB_URL } from '@/lib/api';
 import { safeNext } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/auth-store';
 import { OAuthButtons } from './oauth-buttons';
@@ -48,7 +46,6 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [legalError, setLegalError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const { title, submit, switchText, switchLabel, switchHref, description } = content[mode];
   const returnTo = safeNext(next) ?? '/(protected)/(tabs)';
@@ -120,15 +117,6 @@ export function AuthForm({ mode }: { mode: Mode }) {
   function cancelAndGoHome() {
     request.current?.abort();
     router.replace('/');
-  }
-
-  async function openLegalPage(page: 'terms' | 'guidelines') {
-    setLegalError(null);
-    try {
-      await Linking.openURL(`${WEB_URL}/${page}`);
-    } catch {
-      setLegalError('Could not open this page. Please try again.');
-    }
   }
 
   return (
@@ -245,32 +233,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
           disabled={!ready || pending}
           onPress={handleSubmit}
         />
-        {mode === 'signup' && (
-          <View style={styles.legal}>
-            <Atom.ThemedText type="small" themeColor="textSecondary">
-              By signing up, you agree to our{' '}
-            </Atom.ThemedText>
-            <Pressable
-              accessibilityRole="link"
-              onPress={() => openLegalPage('terms')}
-              style={({ pressed }) => pressed && styles.pressed}>
-              <Atom.ThemedText type="small" style={{ color: theme.accent, textDecorationLine: 'underline' }}>
-                Terms
-              </Atom.ThemedText>
-            </Pressable>
-            <Atom.ThemedText type="small" themeColor="textSecondary"> and </Atom.ThemedText>
-            <Pressable
-              accessibilityRole="link"
-              onPress={() => openLegalPage('guidelines')}
-              style={({ pressed }) => pressed && styles.pressed}>
-              <Atom.ThemedText type="small" style={{ color: theme.accent, textDecorationLine: 'underline' }}>
-                Community guidelines
-              </Atom.ThemedText>
-            </Pressable>
-            <Atom.ThemedText type="small" themeColor="textSecondary">.</Atom.ThemedText>
-          </View>
-        )}
-        {legalError && <Atom.ErrorMessage>{legalError}</Atom.ErrorMessage>}
+        {mode === 'signup' && <Molecule.SignupTerms />}
         <View style={[styles.divider, { backgroundColor: theme.divider }]} />
         <OAuthButtons destination={returnTo} />
         <Atom.ThemedText type="small" themeColor="textSecondary">
@@ -328,11 +291,6 @@ const styles = StyleSheet.create({
   },
   fields: {
     gap: Spacing.three,
-  },
-  legal: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
   },
   passwordField: {
     gap: Spacing.one,

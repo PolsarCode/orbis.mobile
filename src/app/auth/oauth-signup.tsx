@@ -2,6 +2,7 @@ import { Link, router, type Href } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 import * as Atom from '@atom';
+import * as Molecule from '@molecule';
 import * as Template from '@template';
 
 import { Spacing } from '@/constants/theme';
@@ -57,6 +58,15 @@ export default function OAuthSignupScreen() {
     }
   }
 
+  async function startOver() {
+    if (pending) return;
+    try {
+      await clearPendingOAuthSignup();
+    } finally {
+      router.replace('/register' as Href);
+    }
+  }
+
   return (
     <Template.ScreenTemplate>
       <View style={styles.page}>
@@ -102,6 +112,17 @@ export default function OAuthSignupScreen() {
               disabled={!username.trim()}
               onPress={submit}
             />
+            <Atom.ThemedText type="small" themeColor="textSecondary">
+              Not you?{' '}
+              <Atom.ThemedText
+                type="smallBold"
+                accessibilityRole="link"
+                onPress={startOver}
+                themeColor="accent">
+                Start over
+              </Atom.ThemedText>
+            </Atom.ThemedText>
+            <Molecule.SignupTerms />
           </>
         ) : (
           <>
